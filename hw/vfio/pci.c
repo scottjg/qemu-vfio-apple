@@ -338,7 +338,16 @@ static bool vfio_intx_enable(VFIOPCIDevice *vdev, Error **errp)
     int32_t fd;
 
 
-    if (!pin) {
+    if (pin == 0 || pin > PCI_NUM_PINS) {
+        /*
+         * pin == 0:  device does not use INTx.
+         * pin >  4:  spec-illegal value (we've seen the apple-vfio dext
+         *            surface 0xff here when the host config read path
+         *            can't service PCI_INTERRUPT_PIN). Treat both as
+         *            "no INTx" so we don't program a bogus pin into
+         *            pdev->config and trip pci_irq_handler's range
+         *            assert the next time the guest toggles MSI.
+         */
         return true;
     }
 
@@ -3442,7 +3451,8 @@ bool vfio_pci_interrupt_setup(VFIOPCIDevice *vdev, Error **errp)
                vdev->msi_cap_size);
     }
 
-    if (vfio_pci_read_config(pdev, PCI_INTERRUPT_PIN, 1)) {
+    uint8_t intx_pin = vfio_pci_read_config(pdev, PCI_INTERRUPT_PIN, 1);
+    if (intx_pin >= 1 && intx_pin <= PCI_NUM_PINS) {
         vdev->intx.mmap_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL,
                                              vfio_intx_mmap_enable, vdev);
         pci_device_set_intx_routing_notifier(pdev,
