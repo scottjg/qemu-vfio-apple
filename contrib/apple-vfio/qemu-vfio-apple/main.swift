@@ -44,7 +44,7 @@ import Foundation
 let kVersion         = "1.0"
 let kDefaultImageRef = "ghcr.io/scottjg/qemu-vfio-apple-images:latest"
 let kDefaultCpus     = 8
-let kDefaultMemory   = "12G"
+let kDefaultMemory   = "14G"
 let kDefaultSshPort  = 2222
 
 // MARK: - Args

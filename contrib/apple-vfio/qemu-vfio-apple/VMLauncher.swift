@@ -568,6 +568,14 @@ private func buildQemuArgv(opts: Options,
                 // get distinct guest BDFs.
                 String(format: "addr=0x%x.%x", guestSlot, guestFn),
                 "dma-companion=on",
+                // The apple-vfio backend reports ROM region size = 0
+                // (apple-device.c, VFIO_PCI_ROM_REGION_INDEX) because the
+                // DriverKit dext doesn't expose the option ROM. Without
+                // rombar=0, vfio_pci_load_rom() prints "Cannot read device
+                // rom" the first time the guest (or UEFI during boot)
+                // touches the ROM BAR. The ROM is x86 code anyway and the
+                // aarch64 guest can't execute it, so skip the probe.
+                "rombar=0",
             ]
             // multifunction=on only needs to be set on function 0 of
             // the guest slot — qemu propagates the bit to the whole

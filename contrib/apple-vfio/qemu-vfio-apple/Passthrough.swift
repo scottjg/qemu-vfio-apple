@@ -84,7 +84,21 @@ func autoDetectPassthroughSlot() -> [PassthroughCandidate] {
     let picked = preferredSlot ?? slots.values.first
     guard var functions = picked else { return [] }
     functions.sort(by: { $0.function < $1.function })
-    return functions
+
+    // Drop multimedia/audio functions (PCI base class 0x04). On NVIDIA
+    // and AMD discrete GPUs, function 1 is the HDMI/DisplayPort audio
+    // controller — useful for desktop output, useless for headless
+    // inference, and an extra DMA source that has triggered DART
+    // assertions on this fork (see VFIOUserPCIDriver.cpp PrepareForDMA
+    // path). Skip it by default; the user can still force it in via
+    // an explicit `--passthrough BB:DD.F` referencing the audio
+    // function, since findExactFunction() bypasses this filter.
+    let kept = functions.filter { $0.baseClass != 0x04 }
+    for d in functions where d.baseClass == 0x04 {
+        warn("skipping audio function \(d.hostBDF) (\(d.description)) — " +
+             "pass it explicitly with --passthrough \(d.hostBDF) if you need it")
+    }
+    return kept
 }
 
 /// Given an explicit BDF (e.g. "43:00.0"), return the dext-bound
