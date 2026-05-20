@@ -2463,55 +2463,6 @@ static bool vfio_add_std_cap(VFIOPCIDevice *vdev, uint8_t pos, Error **errp)
     return ret;
 }
 
-static int vfio_setup_rebar_ecap(VFIOPCIDevice *vdev, uint16_t pos)
-{
-    PCIDevice *pdev = PCI_DEVICE(vdev);
-    uint32_t ctrl;
-    int i, nbar;
-
-    ctrl = pci_get_long(pdev->config + pos + PCI_REBAR_CTRL);
-    nbar = (ctrl & PCI_REBAR_CTRL_NBAR_MASK) >> PCI_REBAR_CTRL_NBAR_SHIFT;
-
-    for (i = 0; i < nbar; i++) {
-        uint32_t cap;
-        int size;
-
-        ctrl = pci_get_long(pdev->config + pos + PCI_REBAR_CTRL + (i * 8));
-        size = (ctrl & PCI_REBAR_CTRL_BAR_SIZE) >> PCI_REBAR_CTRL_BAR_SHIFT;
-
-        /* The cap register reports sizes 1MB to 128TB, with 4 reserved bits */
-        cap = size <= 27 ? 1U << (size + 4) : 0;
-
-        /*
-         * The PCIe spec (v6.0.1, 7.8.6) requires HW to support at least one
-         * size in the range 1MB to 512GB.  We intend to mask all sizes except
-         * the one currently enabled in the size field, therefore if it's
-         * outside the range, hide the whole capability as this virtualization
-         * trick won't work.  If >512GB resizable BARs start to appear, we
-         * might need an opt-in or reservation scheme in the kernel.
-         */
-        if (!(cap & PCI_REBAR_CAP_SIZES)) {
-            return -EINVAL;
-        }
-
-        /* Hide all sizes reported in the ctrl reg per above requirement. */
-        ctrl &= (PCI_REBAR_CTRL_BAR_SIZE |
-                 PCI_REBAR_CTRL_NBAR_MASK |
-                 PCI_REBAR_CTRL_BAR_IDX);
-
-        /*
-         * The BAR size field is RW, however we've mangled the capability
-         * register such that we only report a single size, ie. the current
-         * BAR size.  A write of an unsupported value is undefined, therefore
-         * the register field is essentially RO.
-         */
-        vfio_add_emulated_long(vdev, pos + PCI_REBAR_CAP + (i * 8), cap, ~0);
-        vfio_add_emulated_long(vdev, pos + PCI_REBAR_CTRL + (i * 8), ctrl, ~0);
-    }
-
-    return 0;
-}
-
 /*
  * Try to retrieve PASID capability information via IOMMUFD APIs and,
  * if supported, synthesize a PASID PCIe extended capability for the
@@ -2638,12 +2589,17 @@ static void vfio_add_ext_cap(VFIOPCIDevice *vdev)
         case 0: /* kernel masked capability */
         case PCI_EXT_CAP_ID_SRIOV: /* Read-only VF BARs confuse OVMF */
         case PCI_EXT_CAP_ID_ARI: /* XXX Needs next function virtualization */
-            trace_vfio_add_ext_cap_dropped(vdev->vbasedev.name, cap_id, next);
-            break;
+        /*
+         * Drop Resizable BAR for the apple-vfio path. macOS allocates a
+         * fixed-size MMIO aperture for the device at boot; if the guest
+         * sees the ReBAR cap it will try to negotiate a larger window
+         * (NVIDIA Blackwell advertises sizes up to 64 GiB), and accesses
+         * past the host's allocated aperture hit unmapped fabric and
+         * panic the host with an LLC bus error. Hiding the cap leaves
+         * the guest using whatever the host enumerator set.
+         */
         case PCI_EXT_CAP_ID_REBAR:
-            if (!vfio_setup_rebar_ecap(vdev, next)) {
-                pcie_add_capability(pdev, cap_id, cap_ver, next, size);
-            }
+            trace_vfio_add_ext_cap_dropped(vdev->vbasedev.name, cap_id, next);
             break;
         /*
          * VFIO kernel does not expose the PASID CAP today. We may synthesize
