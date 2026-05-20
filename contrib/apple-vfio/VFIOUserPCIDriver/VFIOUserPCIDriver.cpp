@@ -62,7 +62,7 @@ enum {
  * page-sized control requests one-by-one.
  */
 #define VFIO_USER_MAX_CLIENT_DMA_REGIONS 65536
-#define VFIO_USER_MAX_CLIENT_DMA_CHUNKS 64
+#define VFIO_USER_MAX_CLIENT_DMA_CHUNKS 128
 #define VFIO_USER_DMA_CHUNK_SIZE (1536ULL * 1024ULL * 1024ULL)
 #define VFIO_USER_MAX_DMA_SEGMENTS 32
 #define VFIO_USER_MAX_IRQ_VECTORS 256
@@ -757,6 +757,17 @@ vfio_user_register_client_dma_region(VFIOUserPCIDriverUserClient *client,
         uint32_t dmaSegmentsCount = VFIO_USER_MAX_DMA_SEGMENTS;
         IOAddressSegment dmaSegments[VFIO_USER_MAX_DMA_SEGMENTS];
         memset(dmaSegments, 0, sizeof(dmaSegments));
+        /*
+         * Pre-call breadcrumb: PrepareForDMA can panic the kernel from
+         * inside IODARTMapper via a REQUIRE assert (see panic log
+         * IODARTMapper.cpp:3375), so any logging *after* the call is
+         * lost when DART rejects the request. Log the iova/size before
+         * entering so the last dext line before a panic identifies the
+         * exact chunk DART couldn't honour.
+         */
+        vfio_user_dma_log("PrepareForDMA enter iova=%#llx size=%llu "
+                          "chunk_offset=%llu chunk=%u",
+                          chunkIOVA, chunkSize, chunkOffset, chunkCount);
         ret = dmaCmd->PrepareForDMA(kIODMACommandPrepareForDMANoOptions,
                                     memDesc,
                                     0,
@@ -1277,6 +1288,29 @@ IMPL(VFIOUserPCIDriver, Start)
         os_log(OS_LOG_DEFAULT, "vfio-user-dext: failed to read PCI identity: %#x", ret);
         IOSafeDeleteNULL(ivars, VFIOUserPCIDriver_IVars, 1);
         return ret;
+    }
+
+    /*
+     * Refuse to attach to multimedia-class functions (PCI base class 0x04).
+     * On NVIDIA/AMD discrete GPUs, function 1 is an HDMI/DisplayPort audio
+     * controller that this fork does not pass through (Passthrough.swift
+     * filters it from auto-detect), and binding the dext to it for nothing
+     * makes macOS treat that function as in-use — an extra DMA-capable
+     * surface sharing the GPU's BAR aperture for no benefit. If a user ever
+     * wants to pass HDA audio through, remove this guard.
+     */
+    if (((identity.classCode >> 16) & 0xff) == 0x04) {
+        os_log(OS_LOG_DEFAULT,
+               "vfio-user-dext: refusing to attach to multimedia function "
+               "%02x:%02x.%u vendor=%04x device=%04x class=%06x",
+               (unsigned int)identity.bus,
+               (unsigned int)identity.device,
+               (unsigned int)identity.function,
+               (unsigned int)identity.vendorID,
+               (unsigned int)identity.deviceID,
+               (unsigned int)identity.classCode);
+        IOSafeDeleteNULL(ivars, VFIOUserPCIDriver_IVars, 1);
+        return kIOReturnUnsupported;
     }
 
     IOPCIDevice *pciDevice = vfio_user_get_pci_device(this);
