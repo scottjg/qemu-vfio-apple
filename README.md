@@ -17,6 +17,7 @@ binaries of this project yet.
 - **Apple Silicon Mac** running macOS 26 (Tahoe) or newer
 - **Xcode 26.3+** with the macOS installed
 - **An Apple Developer account**
+- **A non-TB5 Thunderbolt device** like an eGPU enclosure. Keep in mind that newer Thunderbolt 5 enclosures **DO NOT WORK** correctly with Apple Silicon. Best to stick to an older Thunderbolt 4 or 3 enclosure.
 
 ## Configure the Xcode project for your Apple Developer team
 
