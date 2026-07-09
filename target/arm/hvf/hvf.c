@@ -28,7 +28,6 @@
 #include "hw/core/boards.h"
 #include "hw/core/irq.h"
 #include "qemu/main-loop.h"
-#include "qemu/timer.h"
 #include "system/cpus.h"
 #include "arm-powerctl.h"
 #include "target/arm/cpu.h"
@@ -301,8 +300,6 @@ void hvf_arm_init_debug(void)
 #define TMR_CTL_ENABLE  (1 << 0)
 #define TMR_CTL_IMASK   (1 << 1)
 #define TMR_CTL_ISTATUS (1 << 2)
-
-static void hvf_wfi_timer_cb(void *opaque);
 
 static uint32_t chosen_ipa_bit_size;
 
@@ -1217,9 +1214,6 @@ void hvf_arch_vcpu_destroy(CPUState *cpu)
 {
     hv_return_t ret;
 
-    timer_free(cpu->accel->wfi_timer);
-    cpu->accel->wfi_timer = NULL;
-
     ret = hv_vcpu_destroy(cpu->accel->fd);
     assert_hvf_ok(ret);
 }
@@ -1357,9 +1351,6 @@ int hvf_arch_init_vcpu(CPUState *cpu)
     ret = hv_vcpu_set_sys_reg(cpu->accel->fd, HV_SYS_REG_ID_AA64MMFR0_EL1,
                               arm_cpu->isar.idregs[ID_AA64MMFR0_EL1_IDX]);
     assert_hvf_ok(ret);
-
-    cpu->accel->wfi_timer = timer_new_ns(QEMU_CLOCK_HOST,
-                                          hvf_wfi_timer_cb, cpu);
 
     /*
      * Apple TSO: ACTLR_EL1.EnTSO switches the vCPU to a total-store-
@@ -2058,30 +2049,8 @@ static uint64_t hvf_vtimer_val_raw(void)
     return mach_absolute_time() - hvf_state->vtimer_offset;
 }
 
-static void hvf_wfi_timer_cb(void *opaque)
-{
-    CPUState *cpu = opaque;
-    ARMCPU *arm_cpu = ARM_CPU(cpu);
-
-    /*
-     * vtimer expired while the CPU was halted for WFI.
-     * Mirror HV_EXIT_REASON_VTIMER_ACTIVATED: raise the vtimer
-     * interrupt and mark as masked so hvf_sync_vtimer() will
-     * check and unmask when the guest handles it.
-     *
-     * The interrupt delivery chain (GIC -> cpu_interrupt ->
-     * qemu_cpu_kick) wakes the vCPU thread from halt_cond.
-     */
-    qemu_set_irq(arm_cpu->gt_timer_outputs[GTIMER_VIRT], 1);
-    cpu->accel->vtimer_masked = true;
-}
-
 static int hvf_wfi(CPUState *cpu)
 {
-    ARMCPU *arm_cpu = ARM_CPU(cpu);
-    uint64_t ctl, cval;
-    hv_return_t r;
-
     if (cpu_has_work(cpu)) {
         /*
          * Don't bother to go into our "low power state" if
@@ -2090,34 +2059,6 @@ static int hvf_wfi(CPUState *cpu)
         return 0;
     }
 
-    /*
-     * Set up a host-side timer to wake us when the vtimer expires.
-     * HVF only delivers HV_EXIT_REASON_VTIMER_ACTIVATED during
-     * hv_vcpu_run(), which we won't call while halted.
-     */
-    r = hv_vcpu_get_sys_reg(cpu->accel->fd, HV_SYS_REG_CNTV_CTL_EL0, &ctl);
-    assert_hvf_ok(r);
-
-    if ((ctl & TMR_CTL_ENABLE) && !(ctl & TMR_CTL_IMASK)) {
-        r = hv_vcpu_get_sys_reg(cpu->accel->fd,
-                                HV_SYS_REG_CNTV_CVAL_EL0, &cval);
-        assert_hvf_ok(r);
-
-        uint64_t now = hvf_vtimer_val_raw();
-        if (cval <= now) {
-            /* Timer already expired, don't halt */
-            return 0;
-        }
-
-        uint64_t delta_ticks = cval - now;
-        int64_t delta_ns = delta_ticks * NANOSECONDS_PER_SECOND
-                           / arm_cpu->gt_cntfrq_hz;
-        int64_t deadline = qemu_clock_get_ns(QEMU_CLOCK_HOST) + delta_ns;
-
-        timer_mod(cpu->accel->wfi_timer, deadline);
-    }
-
-    cpu->halted = 1;
     return EXCP_HLT;
 }
 
@@ -2413,11 +2354,7 @@ int hvf_arch_vcpu_exec(CPUState *cpu)
     hv_return_t r;
 
     if (cpu->halted) {
-        if (!cpu_has_work(cpu)) {
-            return EXCP_HLT;
-        }
-        cpu->halted = 0;
-        timer_del(cpu->accel->wfi_timer);
+        return EXCP_HLT;
     }
 
     flush_cpu_state(cpu);
