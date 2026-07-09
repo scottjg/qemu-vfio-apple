@@ -88,7 +88,7 @@ static bool virtio_gpu_update_display(void *opaque)
     return true;
 }
 
-static void virtio_gpu_text_update(void *opaque, console_ch_t *chardata)
+static void virtio_gpu_text_update(void *opaque, uint32_t *chardata)
 {
 }
 
@@ -253,7 +253,7 @@ virtio_gpu_base_device_realize(DeviceState *qdev,
     g->hw_ops = &virtio_gpu_ops;
     for (i = 0; i < g->conf.max_outputs; i++) {
         g->scanout[i].con =
-            graphic_console_init(DEVICE(g), i, &virtio_gpu_ops, g);
+            qemu_graphic_console_create(DEVICE(g), i, &virtio_gpu_ops, g);
     }
 
     return true;

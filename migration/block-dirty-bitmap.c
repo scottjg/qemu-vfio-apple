@@ -766,15 +766,17 @@ static int dirty_bitmap_save_complete(QEMUFile *f, void *opaque)
     return 0;
 }
 
-static void dirty_bitmap_state_pending(void *opaque,
-                                       uint64_t *must_precopy,
-                                       uint64_t *can_postcopy)
+static void dirty_bitmap_state_pending(void *opaque, MigPendingData *data,
+                                       bool exact, bool final)
 {
     DBMSaveState *s = &((DBMState *)opaque)->save;
     SaveBitmapState *dbms;
     uint64_t pending = 0;
 
-    bql_lock();
+    /* Final pending query is called with BQL locked */
+    if (!final) {
+        bql_lock();
+    }
 
     QSIMPLEQ_FOREACH(dbms, &s->dbms_list, entry) {
         uint64_t gran = bdrv_dirty_bitmap_granularity(dbms->bitmap);
@@ -784,11 +786,13 @@ static void dirty_bitmap_state_pending(void *opaque,
         pending += DIV_ROUND_UP(sectors * BDRV_SECTOR_SIZE, gran);
     }
 
-    bql_unlock();
+    if (!final) {
+        bql_unlock();
+    }
 
     trace_dirty_bitmap_state_pending(pending);
 
-    *can_postcopy += pending;
+    data->postcopy_bytes += pending;
 }
 
 /* First occurrence of this bitmap. It should be created if doesn't exist */
@@ -1216,7 +1220,7 @@ fail:
 static int dirty_bitmap_save_setup(QEMUFile *f, void *opaque, Error **errp)
 {
     DBMSaveState *s = &((DBMState *)opaque)->save;
-    SaveBitmapState *dbms = NULL;
+    SaveBitmapState *dbms;
 
     if (init_dirty_bitmap_migration(s, errp) < 0) {
         return -1;
@@ -1250,8 +1254,7 @@ static SaveVMHandlers savevm_dirty_bitmap_handlers = {
     .save_setup = dirty_bitmap_save_setup,
     .save_complete = dirty_bitmap_save_complete,
     .has_postcopy = dirty_bitmap_has_postcopy,
-    .state_pending_exact = dirty_bitmap_state_pending,
-    .state_pending_estimate = dirty_bitmap_state_pending,
+    .save_query_pending = dirty_bitmap_state_pending,
     .save_live_iterate = dirty_bitmap_save_iterate,
     .is_active_iterate = dirty_bitmap_is_active_iterate,
     .load_state = dirty_bitmap_load,

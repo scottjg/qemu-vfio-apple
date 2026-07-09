@@ -141,6 +141,18 @@ enum NvmeCapMask {
 #define NVME_CAP_SET_CMBS(cap, val)   \
     ((cap) |= (uint64_t)((val) & CAP_CMBS_MASK)   << CAP_CMBS_SHIFT)
 
+#define NVME_MIGRATION_SUPPORTED_CAP_BITS ( \
+      ((uint64_t)CAP_MQES_MASK   << CAP_MQES_SHIFT)   \
+    | ((uint64_t)CAP_CQR_MASK    << CAP_CQR_SHIFT)    \
+    | ((uint64_t)CAP_AMS_MASK    << CAP_AMS_SHIFT)    \
+    | ((uint64_t)CAP_TO_MASK     << CAP_TO_SHIFT)     \
+    | ((uint64_t)CAP_DSTRD_MASK  << CAP_DSTRD_SHIFT)  \
+    | ((uint64_t)CAP_NSSRS_MASK  << CAP_NSSRS_SHIFT)  \
+    | ((uint64_t)CAP_CSS_MASK    << CAP_CSS_SHIFT)    \
+    | ((uint64_t)CAP_MPSMIN_MASK << CAP_MPSMIN_SHIFT) \
+    | ((uint64_t)CAP_MPSMAX_MASK << CAP_MPSMAX_SHIFT) \
+)
+
 enum NvmeCapCss {
     NVME_CAP_CSS_NCSS    = 1 << 0,
     NVME_CAP_CSS_IOCSS   = 1 << 6,
@@ -1134,12 +1146,16 @@ enum NvmeIdCns {
     NVME_ID_CNS_CS_IND_NS_ALLOCATED   = 0x1f,
 };
 
+#define NVME_ID_CTRL_SN_MAX_LEN 20
+#define NVME_ID_CTRL_MN_MAX_LEN 40
+#define NVME_ID_CTRL_FR_MAX_LEN 8
+
 typedef struct QEMU_PACKED NvmeIdCtrl {
     uint16_t    vid;
     uint16_t    ssvid;
-    uint8_t     sn[20];
-    uint8_t     mn[40];
-    uint8_t     fr[8];
+    uint8_t     sn[NVME_ID_CTRL_SN_MAX_LEN];
+    uint8_t     mn[NVME_ID_CTRL_MN_MAX_LEN];
+    uint8_t     fr[NVME_ID_CTRL_FR_MAX_LEN];
     uint8_t     rab;
     uint8_t     ieee[3];
     uint8_t     cmic;

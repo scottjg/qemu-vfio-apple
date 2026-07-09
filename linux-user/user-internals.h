@@ -24,6 +24,7 @@
 #include "exec/translation-block.h"
 
 extern char *exec_path;
+extern char real_exec_path[PATH_MAX];
 void init_task_state(TaskState *ts);
 void task_settid(TaskState *);
 void stop_all_tasks(void);
@@ -136,7 +137,7 @@ void print_termios2(void *arg);
 #endif
 
 /* ARM EABI and MIPS expect 64bit types aligned even on pairs or registers */
-#ifdef TARGET_ARM
+#if defined(TARGET_ARM) && !defined(TARGET_AARCH64)
 static inline int regpairs_aligned(CPUArchState *cpu_env, int num)
 {
     return cpu_env->eabi;
@@ -192,6 +193,24 @@ static inline void begin_parallel_context(CPUState *cs)
         tcg_cflags_set(cs, CF_PARALLEL);
     }
 }
+
+/**
+ * init_main_thread: Set CPU state for main thread
+ * @cs: CPU context to set
+ * @info: information about the image being loaded
+ *
+ * This function must be provided by the per-target code. It should
+ * set the initial CPU state based on the information about the
+ * starting binary in @image_info. This will be at a minimum setting
+ * the initial guest program counter and stack pointer; it should
+ * also set up any other guest register values where the Linux ABI
+ * defines that they start set to some other value than what the
+ * guest CPU architecture gives you out of reset.
+ */
+void init_main_thread(CPUState *cs, struct image_info *info);
+
+/* Clone cpu state */
+CPUArchState *cpu_copy(CPUArchState *env);
 
 /*
  * Include target-specific struct and function definitions;

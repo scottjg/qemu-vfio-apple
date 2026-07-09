@@ -226,7 +226,7 @@ static void vdagent_send_mouse(VDAgentChardev *vd)
 }
 
 static void vdagent_pointer_event(DeviceState *dev, QemuConsole *src,
-                                  InputEvent *evt)
+                                  QemuInputEvent *evt)
 {
     static const int bmap[INPUT_BUTTON__MAX] = {
         [INPUT_BUTTON_LEFT]        = VD_AGENT_LBUTTON_MASK,
@@ -241,22 +241,19 @@ static void vdagent_pointer_event(DeviceState *dev, QemuConsole *src,
     };
 
     VDAgentChardev *vd = container_of(dev, struct VDAgentChardev, mouse_dev);
-    InputMoveEvent *move;
-    InputBtnEvent *btn;
     uint32_t xres, yres;
 
     switch (evt->type) {
     case INPUT_EVENT_KIND_ABS:
-        move = evt->u.abs.data;
         xres = qemu_console_get_width(src, 1024);
         yres = qemu_console_get_height(src, 768);
-        if (move->axis == INPUT_AXIS_X) {
-            vd->mouse_x = qemu_input_scale_axis(move->value,
+        if (evt->abs.axis == INPUT_AXIS_X) {
+            vd->mouse_x = qemu_input_scale_axis(evt->abs.value,
                                                 INPUT_EVENT_ABS_MIN,
                                                 INPUT_EVENT_ABS_MAX,
                                                 0, xres);
-        } else if (move->axis == INPUT_AXIS_Y) {
-            vd->mouse_y = qemu_input_scale_axis(move->value,
+        } else if (evt->abs.axis == INPUT_AXIS_Y) {
+            vd->mouse_y = qemu_input_scale_axis(evt->abs.value,
                                                 INPUT_EVENT_ABS_MIN,
                                                 INPUT_EVENT_ABS_MAX,
                                                 0, yres);
@@ -265,11 +262,10 @@ static void vdagent_pointer_event(DeviceState *dev, QemuConsole *src,
         break;
 
     case INPUT_EVENT_KIND_BTN:
-        btn = evt->u.btn.data;
-        if (btn->down) {
-            vd->mouse_btn |= bmap[btn->button];
+        if (evt->btn.down) {
+            vd->mouse_btn |= bmap[evt->btn.button];
         } else {
-            vd->mouse_btn &= ~bmap[btn->button];
+            vd->mouse_btn &= ~bmap[evt->btn.button];
         }
         break;
 
@@ -968,17 +964,6 @@ static const VMStateDescription vmstate_chunk = {
     }
 };
 
-static const VMStateDescription vmstate_vdba = {
-    .name = "vdagent/bytearray",
-    .version_id = 0,
-    .minimum_version_id = 0,
-    .fields = (const VMStateField[]) {
-        VMSTATE_UINT32(len, GByteArray),
-        VMSTATE_VBUFFER_ALLOC_UINT32(data, GByteArray, 0, 0, len),
-        VMSTATE_END_OF_LIST()
-    }
-};
-
 struct CBInfoArray {
     uint32_t n;
     QemuClipboardInfo cbinfo[QEMU_CLIPBOARD_SELECTION__COUNT];
@@ -1068,7 +1053,7 @@ static const VMStateDescription vmstate_vdagent = {
         VMSTATE_UINT32(xsize, VDAgentChardev),
         VMSTATE_UINT32(xoff, VDAgentChardev),
         VMSTATE_VBUFFER_ALLOC_UINT32(xbuf, VDAgentChardev, 0, 0, xsize),
-        VMSTATE_STRUCT_POINTER(outbuf, VDAgentChardev, vmstate_vdba, GByteArray),
+        VMSTATE_GBYTEARRAY(outbuf, VDAgentChardev, 0),
         VMSTATE_UINT32(mouse_x, VDAgentChardev),
         VMSTATE_UINT32(mouse_y, VDAgentChardev),
         VMSTATE_UINT32(mouse_btn, VDAgentChardev),

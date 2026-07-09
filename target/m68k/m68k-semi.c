@@ -22,7 +22,7 @@
  */
 
 #include "qemu/osdep.h"
-
+#include "exec/target_long.h"
 #include "cpu.h"
 #include "gdbstub/syscalls.h"
 #include "gdbstub/helpers.h"

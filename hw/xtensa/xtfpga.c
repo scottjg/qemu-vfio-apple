@@ -35,6 +35,7 @@
 #include "hw/core/qdev-properties.h"
 #include "elf.h"
 #include "system/memory.h"
+#include "system/physmem.h"
 #include "exec/tswap.h"
 #include "hw/char/serial-mm.h"
 #include "net/net.h"
@@ -191,8 +192,12 @@ static PFlashCFI01 *xtfpga_flash_init(MemoryRegion *address_space,
 static uint64_t translate_phys_addr(void *opaque, uint64_t addr)
 {
     XtensaCPU *cpu = opaque;
+    TranslateForDebugResult tres;
 
-    return cpu_get_phys_page_debug(CPU(cpu), addr);
+    if (!cpu_translate_for_debug(CPU(cpu), addr, &tres)) {
+        return -1;
+    }
+    return tres.physaddr;
 }
 
 static void xtfpga_reset(void *opaque)
@@ -366,7 +371,7 @@ static void xtfpga_init(const XtfpgaBoardDesc *board, MachineState *machine)
                 exit(EXIT_FAILURE);
             }
 
-            cpu_physical_memory_write(cur_lowmem, fdt, fdt_size);
+            physical_memory_write(cur_lowmem, fdt, fdt_size);
             cur_tagptr = put_tag(cur_tagptr, BP_TAG_FDT,
                                  sizeof(dtb_addr), &dtb_addr);
             cur_lowmem = QEMU_ALIGN_UP(cur_lowmem + fdt_size, 4 * KiB);
@@ -445,7 +450,7 @@ static void xtfpga_init(const XtfpgaBoardDesc *board, MachineState *machine)
 
             memcpy(boot + 4, &entry_pc, sizeof(entry_pc));
             memcpy(boot + 8, &entry_a2, sizeof(entry_a2));
-            cpu_physical_memory_write(env->pc, boot, boot_sz);
+            physical_memory_write(env->pc, boot, boot_sz);
         }
     } else {
         if (flash) {

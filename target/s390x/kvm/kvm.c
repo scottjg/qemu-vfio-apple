@@ -907,7 +907,8 @@ static int insert_hw_breakpoint(vaddr addr, int len, int type)
     return 0;
 }
 
-int kvm_arch_insert_hw_breakpoint(vaddr addr, vaddr len, int type)
+int kvm_arch_insert_gdbstub_hw_breakpoint(vaddr addr, vaddr len,
+                                          GdbBreakpointType type)
 {
     switch (type) {
     case GDB_BREAKPOINT_HW:
@@ -925,7 +926,8 @@ int kvm_arch_insert_hw_breakpoint(vaddr addr, vaddr len, int type)
     return insert_hw_breakpoint(addr, len, type);
 }
 
-int kvm_arch_remove_hw_breakpoint(vaddr addr, vaddr len, int type)
+int kvm_arch_remove_gdbstub_hw_breakpoint(vaddr addr, vaddr len,
+                                          GdbBreakpointType type)
 {
     int size;
     struct kvm_hw_breakpoint *bp = find_hw_breakpoint(addr, len, type);
@@ -954,7 +956,7 @@ int kvm_arch_remove_hw_breakpoint(vaddr addr, vaddr len, int type)
     return 0;
 }
 
-void kvm_arch_remove_all_hw_breakpoints(void)
+void kvm_arch_remove_all_gdbstub_hw_breakpoints(void)
 {
     nb_hw_breakpoints = 0;
     g_free(hw_breakpoints);
@@ -1765,6 +1767,15 @@ static void insert_stsi_3_2_2(S390CPU *cpu, __u64 addr, uint8_t ar)
     } else if (s390_cpu_virt_mem_read(cpu, addr, ar, &sysib, sizeof(sysib))) {
         return;
     }
+
+    /*
+     * The memory was filled by the kernel but mapped into the guest.
+     * If something is fishy, do not touch the buffer.
+     */
+    if (sysib.count == 0 || sysib.count > ARRAY_SIZE(sysib.ext_names)) {
+        return;
+    }
+
     /* Shift the stack of Extended Names to prepare for our own data */
     memmove(&sysib.ext_names[1], &sysib.ext_names[0],
             sizeof(sysib.ext_names[0]) * (sysib.count - 1));
@@ -1863,7 +1874,7 @@ static int kvm_arch_handle_debug_exit(S390CPU *cpu)
         }
         break;
     case KVM_SINGLESTEP:
-        if (cs->singlestep_enabled) {
+        if (cpu_single_stepping(cs)) {
             ret = EXCP_DEBUG;
         }
         break;
@@ -2279,6 +2290,7 @@ static int kvm_to_feat[][2] = {
     { KVM_S390_VM_CPU_FEAT_PFMFI, S390_FEAT_SIE_PFMFI},
     { KVM_S390_VM_CPU_FEAT_SIGPIF, S390_FEAT_SIE_SIGPIF},
     { KVM_S390_VM_CPU_FEAT_KSS, S390_FEAT_SIE_KSS},
+    { KVM_S390_VM_CPU_FEAT_ASTFLEIE2, S390_FEAT_SIE_ASTFLEIE2 },
 };
 
 static int query_cpu_feat(S390FeatBitmap features)

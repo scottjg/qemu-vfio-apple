@@ -235,16 +235,13 @@ Regexes for git grep:
  - ``\<cpu_ld[us]\?[bwlq]\(_[bl]e\)\?_data\>``
  - ``\<cpu_st[bwlq]\(_[bl]e\)\?_data\+\>``
 
-``cpu_ld*_code``
-~~~~~~~~~~~~~~~~
+``cpu_ld*_code_mmu``
+~~~~~~~~~~~~~~~~~~~~
 
-These functions perform a read for instruction execution.  The ``mmuidx``
-parameter is taken from the current mode of the guest CPU, as determined
-by ``cpu_mmu_index(env, true)``.  The ``retaddr`` parameter is 0, and
-thus does not unwind guest CPU state, because CPU state is always
-synchronized while translating instructions.  Any guest CPU exception
-that is raised will indicate an instruction execution fault rather than
-a data read fault.
+These functions work like the ``cpu_{ld,st}*_mmu`` functions
+except that they perform a read for instruction execution.
+Any guest CPU exception that is raised will indicate an instruction
+execution fault rather than a data read fault.
 
 In general these functions should not be used directly during translation.
 There are wrapper functions that are to be used which also take care of
@@ -252,7 +249,7 @@ plugins for tracing.
 
 Function names follow the pattern:
 
-load: ``cpu_ld{sign}{size}_code(env, ptr)``
+load: ``cpu_ld{sign}{size}_code_mmu(env, addr, oi, retaddr)``
 
 ``sign``
  - (empty) : for 32 or 64 bit sizes
@@ -266,12 +263,12 @@ load: ``cpu_ld{sign}{size}_code(env, ptr)``
  - ``q`` : 64 bits
 
 Regexes for git grep:
- - ``\<cpu_ld[us]\?[bwlq]_code\>``
+ - ``\<cpu_ld[us]\?[bwlq]_code_mmu\>``
 
 ``translator_ld*``
 ~~~~~~~~~~~~~~~~~~
 
-These functions are a wrapper for ``cpu_ld*_code`` which also perform
+These functions are a wrapper for ``cpu_ld*_code_mmu`` which also perform
 any actions required by any tracing plugins.  They are only to be
 called during the translator callback ``translate_insn``.
 
@@ -442,26 +439,28 @@ Regexes for git grep:
  - ``\<ldu\?[bwlq]\(_[bl]e\)\?_phys\>``
  - ``\<st[bwlq]\(_[bl]e\)\?_phys\>``
 
-``cpu_physical_memory_*``
+``physical_memory_*``
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 These are convenience functions which are identical to
-``address_space_*`` but operate specifically on the system address space,
-always pass a ``MEMTXATTRS_UNSPECIFIED`` set of memory attributes and
-ignore whether the memory transaction succeeded or failed.
-For new code they are better avoided:
+``address_space_*`` but operate specifically on the legacy global
+``&address_space_memory`` address space (which might not be used by all
+machines), always pass a ``MEMTXATTRS_UNSPECIFIED`` set of memory attributes
+and ignore whether the memory transaction succeeded or failed. Expected
+users are hardware device models. For new code they are better avoided:
 
 * there is likely to be behaviour you need to model correctly for a
   failed read or write operation
 * a device should usually perform operations on its own AddressSpace
   rather than using the system address space
+* some machines do not use this global address space at all
 
-``cpu_physical_memory_read``
+``physical_memory_read``
 
-``cpu_physical_memory_write``
+``physical_memory_write``
 
 Regexes for git grep:
- - ``\<cpu_physical_memory_\(read\|write\)\>``
+ - ``\<physical_memory_\(read\|write\)\>``
 
 ``cpu_memory_rw_debug``
 ~~~~~~~~~~~~~~~~~~~~~~~

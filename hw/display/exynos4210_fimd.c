@@ -24,11 +24,11 @@
 
 #include "qemu/osdep.h"
 #include "hw/core/qdev-properties.h"
-#include "hw/core/hw-error.h"
 #include "hw/core/irq.h"
 #include "hw/core/sysbus.h"
 #include "exec/cpu-common.h"
 #include "migration/vmstate.h"
+#include "system/physmem.h"
 #include "ui/console.h"
 #include "ui/pixel_ops.h"
 #include "qemu/bswap.h"
@@ -533,7 +533,8 @@ exynos4210_fimd_palette_format(Exynos4210fimdState *s, int window)
             ((s->wpalcon[1] >> FIMD_WPAL_W4PAL_L_SHT) & FIMD_WPAL_W4PAL_L);
         break;
     default:
-        hw_error("exynos4210.fimd: incorrect window number %d\n", window);
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "exynos4210.fimd: incorrect window number %d\n", window);
         ret = 0;
         break;
     }
@@ -757,7 +758,9 @@ exynos4210_fimd_blend_pixel(Exynos4210fimdWindow *w, rgba p_bg, rgba *ret)
             blend_param[i] = FIMD_1_MINUS_COLOR(bg_color);
             break;
         default:
-            hw_error("exynos4210.fimd: blend equation coef illegal value\n");
+            qemu_log_mask(LOG_GUEST_ERROR,
+                          "exynos4210.fimd: blend equation coef illegal value\n");
+            blend_param[i] = 0;
             break;
         }
     }
@@ -864,68 +867,11 @@ static void draw_line_mapcolor(Exynos4210fimdWindow *w, uint8_t *src,
 }
 
 /* Write RGB to QEMU's GraphicConsole framebuffer */
-
-static int put_to_qemufb_pixel8(const rgba p, uint8_t *d)
-{
-    uint32_t pixel = rgb_to_pixel8(p.r, p.g, p.b);
-    *(uint8_t *)d = pixel;
-    return 1;
-}
-
-static int put_to_qemufb_pixel15(const rgba p, uint8_t *d)
-{
-    uint32_t pixel = rgb_to_pixel15(p.r, p.g, p.b);
-    *(uint16_t *)d = pixel;
-    return 2;
-}
-
-static int put_to_qemufb_pixel16(const rgba p, uint8_t *d)
-{
-    uint32_t pixel = rgb_to_pixel16(p.r, p.g, p.b);
-    *(uint16_t *)d = pixel;
-    return 2;
-}
-
-static int put_to_qemufb_pixel24(const rgba p, uint8_t *d)
-{
-    uint32_t pixel = rgb_to_pixel24(p.r, p.g, p.b);
-    *(uint8_t *)d++ = (pixel >>  0) & 0xFF;
-    *(uint8_t *)d++ = (pixel >>  8) & 0xFF;
-    *(uint8_t *)d++ = (pixel >> 16) & 0xFF;
-    return 3;
-}
-
 static int put_to_qemufb_pixel32(const rgba p, uint8_t *d)
 {
     uint32_t pixel = rgb_to_pixel24(p.r, p.g, p.b);
     *(uint32_t *)d = pixel;
     return 4;
-}
-
-/* Routine to copy pixel from internal buffer to QEMU buffer */
-static int (*put_pixel_toqemu)(const rgba p, uint8_t *pixel);
-static inline void fimd_update_putpix_qemu(int bpp)
-{
-    switch (bpp) {
-    case 8:
-        put_pixel_toqemu = put_to_qemufb_pixel8;
-        break;
-    case 15:
-        put_pixel_toqemu = put_to_qemufb_pixel15;
-        break;
-    case 16:
-        put_pixel_toqemu = put_to_qemufb_pixel16;
-        break;
-    case 24:
-        put_pixel_toqemu = put_to_qemufb_pixel24;
-        break;
-    case 32:
-        put_pixel_toqemu = put_to_qemufb_pixel32;
-        break;
-    default:
-        hw_error("exynos4210.fimd: unsupported BPP (%d)", bpp);
-        break;
-    }
 }
 
 /* Routine to copy a line from internal frame buffer to QEMU display */
@@ -935,7 +881,7 @@ static void fimd_copy_line_toqemu(int width, uint8_t *src, uint8_t *dst)
 
     do {
         src += get_pixel_ifb(src, &p);
-        dst += put_pixel_toqemu(p, dst);
+        dst += put_to_qemufb_pixel32(p, dst);
     } while (--width);
 }
 
@@ -1131,7 +1077,7 @@ static void fimd_update_memory_section(Exynos4210fimdState *s, unsigned win)
     }
 
     if (w->host_fb_addr) {
-        cpu_physical_memory_unmap(w->host_fb_addr, w->fb_len, 0, 0);
+        physical_memory_unmap(w->host_fb_addr, w->fb_len, 0, 0);
         w->host_fb_addr = NULL;
         w->fb_len = 0;
     }
@@ -1170,7 +1116,7 @@ static void fimd_update_memory_section(Exynos4210fimdState *s, unsigned win)
         goto error_return;
     }
 
-    w->host_fb_addr = cpu_physical_memory_map(fb_start_addr, &fb_mapped_len,
+    w->host_fb_addr = physical_memory_map(fb_start_addr, &fb_mapped_len,
                                               false);
     if (!w->host_fb_addr) {
         qemu_log_mask(LOG_GUEST_ERROR,
@@ -1182,7 +1128,7 @@ static void fimd_update_memory_section(Exynos4210fimdState *s, unsigned win)
         qemu_log_mask(LOG_GUEST_ERROR,
                       "FIMD: Window %u mapped framebuffer length is less than "
                       "expected\n", win);
-        cpu_physical_memory_unmap(w->host_fb_addr, fb_mapped_len, 0, 0);
+        physical_memory_unmap(w->host_fb_addr, fb_mapped_len, 0, 0);
         goto error_return;
     }
     memory_region_set_log(w->mem_section.mr, true, DIRTY_MEMORY_VGA);
@@ -1333,14 +1279,14 @@ static bool exynos4210_fimd_update(void *opaque)
         int bpp;
 
         bpp = surface_bits_per_pixel(surface);
-        fimd_update_putpix_qemu(bpp);
+        assert(bpp == 32);
         bpp = (bpp + 1) >> 3;
         d = surface_data(surface);
         for (line = first_line; line <= last_line; line++) {
             fimd_copy_line_toqemu(global_width, s->ifb + global_width * line *
                     RGBA_SIZE, d + global_width * line * bpp);
         }
-        dpy_gfx_update_full(s->console);
+        qemu_console_update_full(s->console);
     }
     s->invalidate = false;
     s->vidintcon[1] |= FIMD_VIDINT_INTFRMPEND;
@@ -1964,7 +1910,7 @@ static void exynos4210_fimd_realize(DeviceState *dev, Error **errp)
         return;
     }
 
-    s->console = graphic_console_init(dev, 0, &exynos4210_fimd_ops, s);
+    s->console = qemu_graphic_console_create(dev, 0, &exynos4210_fimd_ops, s);
 }
 
 static void exynos4210_fimd_class_init(ObjectClass *klass, const void *data)

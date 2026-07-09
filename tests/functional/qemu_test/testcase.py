@@ -314,13 +314,32 @@ class QemuSystemTest(QemuBaseTest):
         console_log.addHandler(self._console_log_fh)
 
     def set_machine(self, machinename):
-        # TODO: We should use QMP to get the list of available machines
-        if not self._machinehelp:
-            self._machinehelp = run(
-                [self.qemu_bin, '-M', 'help'],
-                capture_output=True, check=True, encoding='utf8').stdout
-        if self._machinehelp.find(machinename) < 0:
+        cls = type(self)
+
+        if not hasattr(cls, "_machines"):
+            tmp_vm = QEMUMachine(self.qemu_bin)
+            tmp_vm.set_machine('none')
+
+            try:
+                tmp_vm.launch()
+                resp = tmp_vm.qmp('query-machines')
+
+                machines = resp.get('return', [])
+                cls._machines = [
+                    m.get('name') for m in machines if 'name' in m
+                ]
+
+            finally:
+                try:
+                    tmp_vm.shutdown()
+                except Exception:
+                    pass
+
+        self._machines = cls._machines
+
+        if machinename not in self._machines:
             self.skipTest('no support for machine ' + machinename)
+
         self.machine = machinename
 
     def require_accelerator(self, accelerator):

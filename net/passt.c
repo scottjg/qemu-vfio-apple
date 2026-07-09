@@ -90,10 +90,7 @@ static void net_passt_cleanup(NetClientState *nc)
         g_free(s->vhost_net);
         s->vhost_net = NULL;
     }
-    if (s->vhost_watch) {
-        g_source_remove(s->vhost_watch);
-        s->vhost_watch = 0;
-    }
+    g_clear_handle_id(&s->vhost_watch, g_source_remove);
     qemu_chr_fe_deinit(&s->vhost_chr, true);
     if (s->vhost_user) {
         vhost_user_cleanup(s->vhost_user);
@@ -421,8 +418,7 @@ static void passt_vhost_user_event(void *opaque, QEMUChrEvent event)
         if (s->vhost_watch) {
             AioContext *ctx = qemu_get_current_aio_context();
 
-            g_source_remove(s->vhost_watch);
-            s->vhost_watch = 0;
+            g_clear_handle_id(&s->vhost_watch, g_source_remove);
             qemu_chr_fe_set_handlers(&s->vhost_chr, NULL, NULL,  NULL, NULL,
                                      NULL, NULL, false);
 
@@ -499,7 +495,7 @@ static int net_passt_vhost_user_init(NetPasstState *s, Error **errp)
 }
 #endif
 
-static GPtrArray *net_passt_decode_args(const NetDevPasstOptions *passt,
+static GPtrArray *net_passt_decode_args(const NetdevPasstOptions *passt,
                                         gchar *pidfile, Error **errp)
 {
     GPtrArray *args = g_ptr_array_new_with_free_func(g_free);
@@ -641,7 +637,7 @@ static GPtrArray *net_passt_decode_args(const NetDevPasstOptions *passt,
     }
 
     if (passt->has_search && passt->search) {
-        const StringList *list = passt->search;
+        const PasstSearchList *list = passt->search;
         GString *domains = g_string_new(list->value->str);
 
         list = list->next;
@@ -656,7 +652,7 @@ static GPtrArray *net_passt_decode_args(const NetDevPasstOptions *passt,
     }
 
     if (passt->has_tcp_ports && passt->tcp_ports) {
-        const StringList *list = passt->tcp_ports;
+        const PasstPortForwardList *list = passt->tcp_ports;
         GString *tcp_ports = g_string_new(list->value->str);
 
         list = list->next;
@@ -671,7 +667,7 @@ static GPtrArray *net_passt_decode_args(const NetDevPasstOptions *passt,
     }
 
     if (passt->has_udp_ports && passt->udp_ports) {
-        const StringList *list = passt->udp_ports;
+        const PasstPortForwardList *list = passt->udp_ports;
         GString *udp_ports = g_string_new(list->value->str);
 
         list = list->next;
@@ -686,7 +682,7 @@ static GPtrArray *net_passt_decode_args(const NetDevPasstOptions *passt,
     }
 
     if (passt->has_param && passt->param) {
-        const StringList *list = passt->param;
+        const PasstParameterList *list = passt->param;
 
         while (list) {
             g_ptr_array_add(args, g_strdup(list->value->str));

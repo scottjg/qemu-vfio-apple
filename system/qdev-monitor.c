@@ -20,9 +20,10 @@
 #include "qemu/osdep.h"
 #include "hw/core/sysbus.h"
 #include "monitor/hmp.h"
+#include "monitor/hmp-completion.h"
 #include "monitor/monitor.h"
 #include "monitor/qdev.h"
-#include "system/arch_init.h"
+#include "qemu/base-arch-defs.h"
 #include "system/runstate.h"
 #include "qapi/error.h"
 #include "qapi/qapi-commands-qdev.h"
@@ -34,6 +35,7 @@
 #include "qemu/config-file.h"
 #include "qemu/error-report.h"
 #include "qemu/help_option.h"
+#include "qemu/id.h"
 #include "qemu/option.h"
 #include "qemu/qemu-print.h"
 #include "qemu/option_int.h"
@@ -69,7 +71,7 @@ typedef struct QDevAlias
                               QEMU_ARCH_SPARC | \
                               QEMU_ARCH_XTENSA)
 #define QEMU_ARCH_VIRTIO_CCW (QEMU_ARCH_S390X)
-#define QEMU_ARCH_VIRTIO_MMIO (QEMU_ARCH_M68K)
+#define QEMU_ARCH_VIRTIO_MMIO (QEMU_ARCH_M68K | QEMU_ARCH_HEXAGON)
 
 /* Please keep this table sorted by typename. */
 static const QDevAlias qdev_alias_table[] = {
@@ -601,14 +603,17 @@ const char *qdev_set_id(DeviceState *dev, char *id, Error **errp)
      * has no parent
      */
     if (id) {
+        if (!id_wellformed(id)) {
+            error_setg(errp, "Invalid qdev ID '%s'", id);
+            goto err;
+        }
         prop = object_property_try_add_child(qdev_get_peripheral(), id,
                                              OBJECT(dev), NULL);
         if (prop) {
             dev->id = id;
         } else {
             error_setg(errp, "Duplicate device ID '%s'", id);
-            g_free(id);
-            return NULL;
+            goto err;
         }
     } else {
         static int anon_count;
@@ -619,6 +624,10 @@ const char *qdev_set_id(DeviceState *dev, char *id, Error **errp)
     }
 
     return prop->name;
+
+err:
+    g_free(id);
+    return NULL;
 }
 
 BusState *qdev_find_default_bus(DeviceClass *dc, Error **errp)
@@ -721,8 +730,8 @@ DeviceState *qdev_device_add_from_qdict(const QDict *opts,
     qdict_del(properties, "bus");
     qdict_del(properties, "id");
 
-    object_set_properties_from_keyval(&dev->parent_obj, properties, from_json,
-                                      errp);
+    object_set_props_from_keyval(&dev->parent_obj, properties, from_json,
+                                 errp);
     qobject_unref(properties);
     if (*errp) {
         goto err_del_dev;

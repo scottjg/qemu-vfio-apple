@@ -6,6 +6,7 @@
 
 #include "user/abitypes.h"
 #include "user/page-protection.h"
+#include "exec/page-protection.h"
 
 #include "syscall_defs.h"
 #include "target_syscall.h"
@@ -26,6 +27,7 @@
 struct image_info {
         abi_ulong       load_bias;
         abi_ulong       load_addr;
+        abi_ulong       phdr_addr;
         abi_ulong       start_code;
         abi_ulong       end_code;
         abi_ulong       start_data;
@@ -367,10 +369,5 @@ void *lock_user_string(abi_ulong guest_addr);
     (host_ptr = lock_user(type, guest_addr, sizeof(*host_ptr), copy))
 #define unlock_user_struct(host_ptr, guest_addr, copy)		\
     unlock_user(host_ptr, guest_addr, (copy) ? sizeof(*host_ptr) : 0)
-
-/* Clone cpu state */
-CPUArchState *cpu_copy(CPUArchState *env);
-
-void init_main_thread(CPUState *cs, struct image_info *info);
 
 #endif /* QEMU_H */

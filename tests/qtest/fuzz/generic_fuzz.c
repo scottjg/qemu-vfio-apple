@@ -776,7 +776,7 @@ static void generic_pre_fuzz(QTestState *s)
     if (!getenv("QEMU_FUZZ_OBJECTS")) {
         usage();
     }
-    if (getenv("QTEST_LOG")) {
+    if (qtest_verbose("fuzz")) {
         qtest_log_enabled = 1;
     }
     if (getenv("QEMU_AVOID_DOUBLE_FETCH")) {

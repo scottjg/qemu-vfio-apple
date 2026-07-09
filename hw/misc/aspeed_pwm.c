@@ -65,9 +65,9 @@ static const MemoryRegionOps aspeed_pwm_ops = {
     },
 };
 
-static void aspeed_pwm_reset(DeviceState *dev)
+static void aspeed_pwm_reset_hold(Object *obj, ResetType type)
 {
-    struct AspeedPWMState *s = ASPEED_PWM(dev);
+    AspeedPWMState *s = ASPEED_PWM(obj);
 
     memset(s->regs, 0, sizeof(s->regs));
 }
@@ -98,23 +98,21 @@ static const VMStateDescription vmstate_aspeed_pwm = {
 static void aspeed_pwm_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
+    ResettableClass *rc = RESETTABLE_CLASS(klass);
 
     dc->realize = aspeed_pwm_realize;
-    device_class_set_legacy_reset(dc, aspeed_pwm_reset);
+    rc->phases.hold = aspeed_pwm_reset_hold;
     dc->desc = "Aspeed PWM Controller";
     dc->vmsd = &vmstate_aspeed_pwm;
 }
 
-static const TypeInfo aspeed_pwm_info = {
-    .name = TYPE_ASPEED_PWM,
-    .parent = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(AspeedPWMState),
-    .class_init = aspeed_pwm_class_init,
+static const TypeInfo aspeed_pwm_types[] = {
+    {
+        .name = TYPE_ASPEED_PWM,
+        .parent = TYPE_SYS_BUS_DEVICE,
+        .instance_size = sizeof(AspeedPWMState),
+        .class_init = aspeed_pwm_class_init,
+    }
 };
 
-static void aspeed_pwm_register_types(void)
-{
-    type_register_static(&aspeed_pwm_info);
-}
-
-type_init(aspeed_pwm_register_types);
+DEFINE_TYPES(aspeed_pwm_types)

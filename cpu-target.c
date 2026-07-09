@@ -28,10 +28,12 @@
 
 /* enable or disable single step mode. EXCP_DEBUG is returned by the
    CPU loop after each instruction */
-void cpu_single_step(CPUState *cpu, int enabled)
+void cpu_single_step(CPUState *cpu, unsigned flags)
 {
-    if (cpu->singlestep_enabled != enabled) {
-        cpu->singlestep_enabled = enabled;
+    if (cpu->singlestep_flags != flags) {
+        trace_cpu_change_singlestep_flags(cpu->cpu_index,
+                                          cpu->singlestep_flags, flags);
+        cpu->singlestep_flags = flags;
 
 #if !defined(CONFIG_USER_ONLY)
         const AccelOpsClass *ops = cpus_get_accel();
@@ -39,8 +41,6 @@ void cpu_single_step(CPUState *cpu, int enabled)
             ops->update_guest_debug(cpu);
         }
 #endif
-
-        trace_breakpoint_singlestep(cpu->cpu_index, enabled);
     }
 }
 

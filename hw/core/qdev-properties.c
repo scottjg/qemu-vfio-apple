@@ -670,6 +670,7 @@ static Property array_elem_prop(Object *obj, const Property *parent_prop,
          * being inside the device struct.
          */
         .offset = (uintptr_t)elem - (uintptr_t)obj,
+        .link_type = parent_prop->link_type,
     };
 }
 
@@ -951,6 +952,12 @@ void qdev_prop_set_array(DeviceState *dev, const char *name, QList *values)
     qobject_unref(values);
 }
 
+void qlist_append_link(QList *qlist, Object *obj)
+{
+    g_autofree char *path = object_get_canonical_path(obj);
+    qlist_append_str(qlist, path);
+}
+
 static GPtrArray *global_props(void)
 {
     static GPtrArray *gp;
@@ -1060,9 +1067,80 @@ static ObjectProperty *create_link_property(ObjectClass *oc, const char *name,
                                           OBJ_PROP_LINK_STRONG);
 }
 
+/*
+ * The logic in these get_link() and set_link() functions is similar
+ * to that used for single-element link properties in the
+ * object_get_link_property() and object_set_link_property() functions.
+ * The difference is largely in how we get the expected type of the
+ * link: for us it is in the Property struct, and for a single link
+ * property it is part of the property name on the object.
+ */
+static void get_link(Object *obj, Visitor *v, const char *name, void *opaque,
+                     Error **errp)
+{
+    const Property *prop = opaque;
+    Object **targetp = object_field_prop_ptr(obj, prop);
+    g_autofree char *path = NULL;
+
+    if (*targetp) {
+        path = object_get_canonical_path(*targetp);
+        visit_type_str(v, name, &path, errp);
+    } else {
+        path = g_strdup("");
+        visit_type_str(v, name, &path, errp);
+    }
+}
+
+static void set_link(Object *obj, Visitor *v, const char *name, void *opaque,
+                     Error **errp)
+{
+    const Property *prop = opaque;
+    Object **targetp = object_field_prop_ptr(obj, prop);
+    g_autofree char *path = NULL;
+    Object *new_target, *old_target = *targetp;
+
+    ERRP_GUARD();
+
+    /* Get the path to the object we want to set the link to */
+    if (!visit_type_str(v, name, &path, errp)) {
+        return;
+    }
+
+    /* Now get the pointer to the actual object */
+    if (*path) {
+        new_target = object_resolve_and_typecheck(path, prop->name,
+                                                  prop->link_type, errp);
+        if (!new_target) {
+            return;
+        }
+    } else {
+        new_target = NULL;
+    }
+
+    /*
+     * Our link properties are always OBJ_PROP_LINK_STRONG and
+     * have the allow_set_link_before_realize check.
+     */
+    qdev_prop_allow_set_link_before_realize(obj, prop->name, new_target, errp);
+    if (*errp) {
+        return;
+    }
+
+    *targetp = new_target;
+    object_ref(new_target);
+    object_unref(old_target);
+}
+
 const PropertyInfo qdev_prop_link = {
     .type = "link",
     .create = create_link_property,
+    /*
+     * Since we have a create method, the get and set are used
+     * only in get_prop_array() and set_prop_array() for the case
+     * where we have an array of link properties.
+     */
+    .get = get_link,
+    .set = set_link,
 };
 
 void qdev_property_add_static(DeviceState *dev, const Property *prop)

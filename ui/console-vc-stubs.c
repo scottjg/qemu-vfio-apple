@@ -9,6 +9,7 @@
 #include "qemu/option.h"
 #include "chardev/char.h"
 #include "ui/console-priv.h"
+#include "vt100.h"
 
 void qemu_text_console_update_size(QemuTextConsole *c)
 {

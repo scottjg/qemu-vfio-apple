@@ -18,6 +18,7 @@
 #include "qemu/error-report.h"
 #include "hw/i2c/aspeed_i2c.h"
 #include "net/net.h"
+#include "system/qtest.h"
 #include "system/system.h"
 #include "hw/intc/arm_gicv3.h"
 #include "qobject/qlist.h"
@@ -30,7 +31,7 @@
 static const hwaddr aspeed_soc_ast2700_memmap[] = {
     [ASPEED_DEV_VBOOTROM]  =  0x00000000,
     [ASPEED_DEV_IOMEM]     =  0x00020000,
-    [ASPEED_DEV_SRAM]      =  0x10000000,
+    [ASPEED_DEV_SRAM0]     =  0x10000000,
     [ASPEED_DEV_DPMCU]     =  0x11000000,
     [ASPEED_DEV_IOMEM0]    =  0x12000000,
     [ASPEED_DEV_EHCI1]     =  0x12061000,
@@ -419,6 +420,15 @@ static void aspeed_soc_ast2700_init(Object *obj)
     }
 
     for (i = 0; i < sc->num_cpus; i++) {
+        if (qtest_enabled() && !target_aarch64()) {
+            /*
+             * Introspection qtest just want to create this object
+             * without realizing it. ARM_CPU_TYPE_NAME("cortex-a35")
+             * is not available on 32-bit binary: skip it since we
+             * won't even realize it.
+             */
+            continue;
+        }
         object_initialize_child(obj, "cpu[*]", &a->cpu[i],
                                 aspeed_soc_cpu_type(sc->valid_cpu_types));
     }
@@ -693,6 +703,10 @@ static void aspeed_soc_ast2700_realize(DeviceState *dev, Error **errp)
     qemu_irq irq;
     int uart;
 
+    if (qtest_enabled() && !target_aarch64()) {
+        g_assert_not_reached();
+    }
+
     /* Default boot region (SPI memory or ROMs) */
     memory_region_init(&s->spi_boot_container, OBJECT(s),
                        "aspeed.spi_boot_container", 0x400000000);
@@ -778,12 +792,12 @@ static void aspeed_soc_ast2700_realize(DeviceState *dev, Error **errp)
 
     /* SRAM */
     name = g_strdup_printf("aspeed.sram.%d", CPU(&a->cpu[0])->cpu_index);
-    if (!memory_region_init_ram(&s->sram, OBJECT(s), name, sc->sram_size,
-                                errp)) {
+    if (!memory_region_init_ram(&s->sram[0], OBJECT(s), name,
+                                sc->sram_size[0], errp)) {
         return;
     }
     memory_region_add_subregion(s->memory,
-                                sc->memmap[ASPEED_DEV_SRAM], &s->sram);
+                                sc->memmap[ASPEED_DEV_SRAM0], &s->sram[0]);
 
     /* VBOOTROM */
     if (!memory_region_init_ram(&s->vbootrom, OBJECT(s), "aspeed.vbootrom",
@@ -1151,7 +1165,7 @@ static void aspeed_soc_ast2700a1_class_init(ObjectClass *oc, const void *data)
 
     sc->valid_cpu_types = valid_cpu_types;
     sc->silicon_rev  = AST2700_A1_SILICON_REV;
-    sc->sram_size    = 0x20000;
+    sc->sram_size[0] = 0x20000;
     sc->pcie_num     = 3;
     sc->spis_num     = 3;
     sc->sgpio_num    = 2;
@@ -1181,7 +1195,7 @@ static void aspeed_soc_ast2700a2_class_init(ObjectClass *oc, const void *data)
 
     sc->valid_cpu_types = valid_cpu_types;
     sc->silicon_rev  = AST2700_A2_SILICON_REV;
-    sc->sram_size    = 0x20000;
+    sc->sram_size[0] = 0x20000;
     sc->pcie_num     = 3;
     sc->spis_num     = 3;
     sc->sgpio_num    = 2;

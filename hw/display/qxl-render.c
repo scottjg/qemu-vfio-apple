@@ -135,7 +135,7 @@ static void qxl_render_update_area_unlocked(PCIQXLDevice *qxl)
                 (width,
                  height);
         }
-        dpy_gfx_replace_surface(vga->con, surface);
+        qemu_console_set_surface(vga->con, surface);
     }
 
     if (!qxl->guest_primary.data) {
@@ -154,16 +154,16 @@ static void qxl_render_update_area_unlocked(PCIQXLDevice *qxl)
             continue;
         }
         qxl_blit(qxl, qxl->dirty+i);
-        dpy_gfx_update(vga->con,
-                       qxl->dirty[i].left, qxl->dirty[i].top,
-                       qxl->dirty[i].right - qxl->dirty[i].left,
-                       qxl->dirty[i].bottom - qxl->dirty[i].top);
+        qemu_console_update(vga->con,
+                            qxl->dirty[i].left, qxl->dirty[i].top,
+                            qxl->dirty[i].right - qxl->dirty[i].left,
+                            qxl->dirty[i].bottom - qxl->dirty[i].top);
     }
     qxl->num_dirty_rects = 0;
 
 end:
     if (qxl->render_update_cookie_num == 0) {
-        graphic_hw_update_done(qxl->ssd.dcl.con);
+        qemu_console_hw_update_done(qxl->ssd.dcl.con);
     }
 }
 
@@ -272,9 +272,11 @@ static QEMUCursor *qxl_cursor(PCIQXLDevice *qxl, QXLCursor *cursor,
     case SPICE_CURSOR_TYPE_MONO:
         /* Assume that the full cursor is available in a single chunk. */
         size = 2 * cursor_get_mono_bpl(c) * c->height;
-        if (size != cursor->data_size) {
-            fprintf(stderr, "%s: bad monochrome cursor %ux%u with size %u\n",
-                    __func__, c->width, c->height, cursor->data_size);
+        if (size != cursor->data_size || cursor->chunk.data_size < size) {
+            qxl_set_guest_bug(qxl, "%s: bad monochrome cursor %ux%u"
+                              " data_size %u chunk_size %u",
+                              __func__, c->width, c->height,
+                              cursor->data_size, cursor->chunk.data_size);
             goto fail;
         }
         and_mask = cursor->chunk.data;

@@ -270,7 +270,8 @@ static bool ssd0323_update_display(void *opaque)
         }
     }
     s->redraw = 0;
-    dpy_gfx_update(s->con, 0, 0, 128 * MAGNIFY, 64 * MAGNIFY);
+    qemu_console_update(s->con, 0, 0, 128 * MAGNIFY, 64 * MAGNIFY);
+
     return true;
 }
 
@@ -356,7 +357,7 @@ static void ssd0323_realize(SSIPeripheral *d, Error **errp)
 
     s->col_end = 63;
     s->row_end = 79;
-    s->con = graphic_console_init(dev, 0, &ssd0323_ops, s);
+    s->con = qemu_graphic_console_create(dev, 0, &ssd0323_ops, s);
     qemu_console_resize(s->con, 128 * MAGNIFY, 64 * MAGNIFY);
 
     qdev_init_gpio_in(dev, ssd0323_cd, 1);

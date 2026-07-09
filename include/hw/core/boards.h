@@ -280,6 +280,7 @@ struct MachineClass {
     int (*kvm_type)(MachineState *machine, const char *arg);
     int (*get_physical_address_range)(MachineState *machine,
         int default_ipa_size, int max_ipa_size);
+    bool (*get_kernel_irqchip_default) (const MachineState *machine);
 
     BlockInterfaceType block_default_type;
     int units_per_default_bus;

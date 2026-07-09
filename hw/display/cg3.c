@@ -137,7 +137,7 @@ static bool cg3_update_display(void *opaque)
             }
         } else {
             if (y_start >= 0) {
-                dpy_gfx_update(s->con, 0, y_start, width, y - y_start);
+                qemu_console_update(s->con, 0, y_start, width, y - y_start);
                 y_start = -1;
             }
             pix += width;
@@ -146,7 +146,7 @@ static bool cg3_update_display(void *opaque)
     }
     s->full_update = 0;
     if (y_start >= 0) {
-        dpy_gfx_update(s->con, 0, y_start, width, y - y_start);
+        qemu_console_update(s->con, 0, y_start, width, y - y_start);
     }
     /* vsync interrupt? */
     if (s->regs[0] & CG3_CR_ENABLE_INTS) {
@@ -311,7 +311,7 @@ static void cg3_realizefn(DeviceState *dev, Error **errp)
 
     sysbus_init_irq(sbd, &s->irq);
 
-    s->con = graphic_console_init(dev, 0, &cg3_ops, s);
+    s->con = qemu_graphic_console_create(dev, 0, &cg3_ops, s);
     qemu_console_resize(s->con, s->width, s->height);
 }
 

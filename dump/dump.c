@@ -21,6 +21,7 @@
 #include "system/dump.h"
 #include "system/runstate.h"
 #include "system/cpus.h"
+#include "system/physmem.h"
 #include "qapi/error.h"
 #include "qapi/qapi-commands-dump.h"
 #include "qapi/qapi-events-dump.h"
@@ -29,6 +30,7 @@
 #include "qemu/main-loop.h"
 #include "hw/misc/vmcoreinfo.h"
 #include "migration/blocker.h"
+#include "migration/misc.h"
 #include "hw/core/cpu.h"
 #include "win_dump.h"
 #include "qemu/range.h"
@@ -1770,7 +1772,8 @@ static void vmcoreinfo_update_phys_base(DumpState *s)
         if (prefix && g_str_has_prefix(lines[i], prefix)) {
             if (qemu_strtou64(lines[i] + strlen(prefix), NULL, 16,
                               &phys_base) < 0) {
-                warn_report("Failed to read %s", prefix);
+                warn_report("failed to parse %s in VMCOREINFO: '%s'",
+                            prefix, lines[i] + strlen(prefix));
             } else {
                 s->dump_info.phys_base = phys_base;
             }
@@ -1892,7 +1895,7 @@ static void dump_init(DumpState *s, int fd, bool has_format,
             warn_report("guest note format is unsupported: %" PRIu16, guest_format);
         } else {
             s->guest_note = g_malloc(size + 1); /* +1 for adding \0 */
-            cpu_physical_memory_read(addr, s->guest_note, size);
+            physical_memory_read(addr, s->guest_note, size);
 
             get_note_sizes(s, s->guest_note, NULL, &name_size, &desc_size);
             s->guest_note_size = ELF_NOTE_SIZE(note_head_size, name_size,
@@ -2079,8 +2082,8 @@ void qmp_dump_guest_memory(bool paging, const char *protocol,
     bool detach_p = false;
     bool kdump_raw = false;
 
-    if (runstate_check(RUN_STATE_INMIGRATE)) {
-        error_setg(errp, "Dump not allowed during incoming migration.");
+    if (migration_guest_ram_loading()) {
+        error_setg(errp, "Dump not allowed during migration.");
         return;
     }
 

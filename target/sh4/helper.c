@@ -24,6 +24,7 @@
 #include "exec/page-protection.h"
 #include "exec/target_page.h"
 #include "exec/log.h"
+#include "accel/tcg/cpu-loop.h"
 #include "qemu/plugin.h"
 
 #if !defined(CONFIG_USER_ONLY)
@@ -435,7 +436,7 @@ static int get_physical_address(CPUSH4State *env, hwaddr* physical,
     return get_mmu_address(env, physical, prot, address, access_type);
 }
 
-hwaddr superh_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
+hwaddr superh_cpu_get_phys_addr_debug(CPUState *cs, vaddr addr)
 {
     hwaddr physical;
     int prot;

@@ -1783,7 +1783,7 @@ bool tcg_target_has_memory_bswap(MemOp memop)
      * Reject 16-byte memop with 16-byte atomicity, i.e. VMOVDQA,
      * but do allow a pair of 64-bit operations, i.e. MOVBEQ.
      */
-    aa = atom_and_align_for_opc(tcg_ctx, memop, MO_ATOM_IFALIGN, true);
+    aa = atom_and_align_for_opc(tcg_ctx, memop, MO_ATOM_WITHIN16, true);
     return aa.atom < MO_128;
 }
 
@@ -1934,7 +1934,7 @@ static TCGLabelQemuLdst *prepare_host_addr(TCGContext *s, HostAddress *h,
         *h = x86_guest_base;
     }
     h->base = addr;
-    h->aa = atom_and_align_for_opc(s, opc, MO_ATOM_IFALIGN, s_bits == MO_128);
+    h->aa = atom_and_align_for_opc(s, opc, MO_ATOM_WITHIN16, s_bits == MO_128);
     a_mask = (1 << h->aa.align) - 1;
 
     if (tcg_use_softmmu) {

@@ -69,7 +69,7 @@ struct XilinxSPIPS {
     uint8_t num_busses;
 
     uint8_t snoop_state;
-    int cmd_dummies;
+    int cmd_dummy_bytes;
     uint8_t link_state;
     uint8_t link_state_next;
     uint8_t link_state_next_when;

@@ -639,6 +639,25 @@ ChardevBackend *qemu_chr_parse_opts(QemuOpts *opts, Error **errp)
         return NULL;
     }
 
+    if (!cc->supports_size_opts) {
+        const char * const invalid_opts[] = {
+            "width", "height", "cols", "rows", NULL
+        };
+
+        if (qemu_opt_has_any(opts, invalid_opts)) {
+            error_setg(errp, "chardev '%s' does not support size options",
+                       qemu_opts_id(opts));
+            return NULL;
+        }
+    }
+    if (!cc->supports_encoding_opts) {
+        if (qemu_opt_get(opts, "encoding")) {
+            error_setg(errp, "chardev '%s' does not support encoding option",
+                       qemu_opts_id(opts));
+            return NULL;
+        }
+    }
+
     backend = g_new0(ChardevBackend, 1);
     backend->type = CHARDEV_BACKEND_KIND_NULL;
 
@@ -785,8 +804,9 @@ static Chardev *qemu_chr_new_from_name(const char *label, const char *filename,
     }
 
     if (qemu_opt_get_bool(opts, "mux", 0)) {
+        const char *chardev_id = qemu_opts_id(opts);
         assert(permit_mux_mon);
-        monitor_init_hmp(chr, true, &err);
+        monitor_new_hmp(NULL, chardev_id, true, &err);
         if (err) {
             error_report_err(err);
             object_unparent(OBJECT(chr));
@@ -960,6 +980,9 @@ QemuOptsList qemu_chardev_opts = {
         },{
             .name = "rows",
             .type = QEMU_OPT_NUMBER,
+        },{
+            .name = "encoding",
+            .type = QEMU_OPT_STRING,
         },{
             .name = "mux",
             .type = QEMU_OPT_BOOL,

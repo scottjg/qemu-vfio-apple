@@ -419,12 +419,21 @@ static void aspeed_machine_class_init(ObjectClass *oc, const void *data)
     aspeed_machine_class_props_init(oc);
 }
 
+static void aspeed_machine_instance_finalize(Object *obj)
+{
+    AspeedMachineState *bmc = ASPEED_MACHINE(obj);
+
+    g_free(bmc->fmc_model);
+    g_free(bmc->spi_model);
+}
+
 static const TypeInfo aspeed_machine_types[] = {
     {
         .name          = TYPE_ASPEED_MACHINE,
         .parent        = TYPE_MACHINE,
         .instance_size = sizeof(AspeedMachineState),
         .instance_init = aspeed_machine_instance_init,
+        .instance_finalize = aspeed_machine_instance_finalize,
         .class_size    = sizeof(AspeedMachineClass),
         .class_init    = aspeed_machine_class_init,
         .abstract      = true,

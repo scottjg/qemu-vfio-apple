@@ -25,6 +25,7 @@
 #include "qemu/units.h"
 #include "qemu/cutils.h"
 #include "qapi/error.h"
+#include "system/physmem.h"
 #include "system/qtest.h"
 #include "system/system.h"
 #include "system/numa.h"
@@ -802,9 +803,13 @@ static void pnv_reset(MachineState *machine, ResetType type)
         mpipl_write_succeeded = do_mpipl_write(pnv);
     }
 
-    /* Regenerate device tree */
-    fdt = pnv_dt_create(machine);
-    _FDT((fdt_pack(fdt)));
+    /* Only create new dt if not provided in -dtb */
+    if (!machine->dtb) {
+        fdt = pnv_dt_create(machine);
+        _FDT((fdt_pack(fdt)));
+    } else {
+        fdt = machine->fdt;
+    }
 
     /*
      * If it's a MPIPL boot, add the "mpipl-boot" property, and reset the
@@ -838,24 +843,16 @@ static void pnv_reset(MachineState *machine, ResetType type)
          * crash
          */
 
-        MpiplProcDumpArea proc_area;
+        MpiplProcDumpArea proc_area = {
+            .version = PROC_DUMP_AREA_VERSION_P9,
+            .thread_size = cpu_to_be32(sizeof(MpiplPreservedCPUState)),
+        };
 
-        proc_area.version = PROC_DUMP_AREA_VERSION_P9;
-        proc_area.thread_size = cpu_to_be32(sizeof(MpiplPreservedCPUState));
-
-        /* These are to be allocated & assigned by the firmware */
-        proc_area.alloc_addr = 0;
-        proc_area.alloc_size = 0;
-
-        /* These get assigned after crash, when QEMU preserves the registers */
-        proc_area.dest_addr = 0;
-        proc_area.act_size = 0;
-
-        cpu_physical_memory_write(PROC_DUMP_AREA_OFF, &proc_area,
+        physical_memory_write(PROC_DUMP_AREA_OFF, &proc_area,
                 sizeof(proc_area));
     }
 
-    cpu_physical_memory_write(PNV_FDT_ADDR, fdt, fdt_totalsize(fdt));
+    physical_memory_write(PNV_FDT_ADDR, fdt, fdt_totalsize(fdt));
 
     /* Free previous device tree set by pnv_init/reset/machine_init_done */
     g_free(machine->fdt);
@@ -870,16 +867,6 @@ static ISABus *pnv_chip_power8_isa_create(PnvChip *chip, Error **errp)
     qdev_connect_gpio_out_named(DEVICE(&chip8->lpc), "LPCHC", 0, irq);
 
     return pnv_lpc_isa_create(&chip8->lpc, true, errp);
-}
-
-static ISABus *pnv_chip_power8nvl_isa_create(PnvChip *chip, Error **errp)
-{
-    Pnv8Chip *chip8 = PNV8_CHIP(chip);
-    qemu_irq irq = qdev_get_gpio_in(DEVICE(&chip8->psi), PSIHB_IRQ_LPC_I2C);
-
-    qdev_connect_gpio_out_named(DEVICE(&chip8->lpc), "LPCHC", 0, irq);
-
-    return pnv_lpc_isa_create(&chip8->lpc, false, errp);
 }
 
 static ISABus *pnv_chip_power9_isa_create(PnvChip *chip, Error **errp)
@@ -1649,7 +1636,6 @@ static void *pnv_chip_power11_intc_get(PnvChip *chip)
  *  EX14
  * <EX15 reserved>
  */
-#define POWER8E_CORE_MASK  (0x7070ull)
 #define POWER8_CORE_MASK   (0x7e7eull)
 
 /*
@@ -1696,6 +1682,7 @@ static void pnv_chip_power8_instance_init(Object *obj)
              */
             object_property_add_child(obj, "phb[*]", phb);
             chip8->phbs[i] = PNV_PHB(phb);
+            object_unref(phb);
         }
     }
 
@@ -1829,30 +1816,6 @@ static uint32_t pnv_chip_power8_xscom_pcba(PnvChip *chip, uint64_t addr)
     return ((addr >> 4) & ~0xfull) | ((addr >> 3) & 0xf);
 }
 
-static void pnv_chip_power8e_class_init(ObjectClass *klass, const void *data)
-{
-    DeviceClass *dc = DEVICE_CLASS(klass);
-    PnvChipClass *k = PNV_CHIP_CLASS(klass);
-
-    k->chip_cfam_id = 0x221ef04980000000ull;  /* P8 Murano DD2.1 */
-    k->cores_mask = POWER8E_CORE_MASK;
-    k->num_phbs = 3;
-    k->get_pir_tir = pnv_get_pir_tir_p8;
-    k->intc_create = pnv_chip_power8_intc_create;
-    k->intc_reset = pnv_chip_power8_intc_reset;
-    k->intc_destroy = pnv_chip_power8_intc_destroy;
-    k->intc_print_info = pnv_chip_power8_intc_print_info;
-    k->isa_create = pnv_chip_power8_isa_create;
-    k->dt_populate = pnv_chip_power8_dt_populate;
-    k->pic_print_info = pnv_chip_power8_pic_print_info;
-    k->xscom_core_base = pnv_chip_power8_xscom_core_base;
-    k->xscom_pcba = pnv_chip_power8_xscom_pcba;
-    dc->desc = "PowerNV Chip POWER8E";
-
-    device_class_set_parent_realize(dc, pnv_chip_power8_realize,
-                                    &k->parent_realize);
-}
-
 static void pnv_chip_power8_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -1872,30 +1835,6 @@ static void pnv_chip_power8_class_init(ObjectClass *klass, const void *data)
     k->xscom_core_base = pnv_chip_power8_xscom_core_base;
     k->xscom_pcba = pnv_chip_power8_xscom_pcba;
     dc->desc = "PowerNV Chip POWER8";
-
-    device_class_set_parent_realize(dc, pnv_chip_power8_realize,
-                                    &k->parent_realize);
-}
-
-static void pnv_chip_power8nvl_class_init(ObjectClass *klass, const void *data)
-{
-    DeviceClass *dc = DEVICE_CLASS(klass);
-    PnvChipClass *k = PNV_CHIP_CLASS(klass);
-
-    k->chip_cfam_id = 0x120d304980000000ull;  /* P8 Naples DD1.0 */
-    k->cores_mask = POWER8_CORE_MASK;
-    k->num_phbs = 4;
-    k->get_pir_tir = pnv_get_pir_tir_p8;
-    k->intc_create = pnv_chip_power8_intc_create;
-    k->intc_reset = pnv_chip_power8_intc_reset;
-    k->intc_destroy = pnv_chip_power8_intc_destroy;
-    k->intc_print_info = pnv_chip_power8_intc_print_info;
-    k->isa_create = pnv_chip_power8nvl_isa_create;
-    k->dt_populate = pnv_chip_power8_dt_populate;
-    k->pic_print_info = pnv_chip_power8_pic_print_info;
-    k->xscom_core_base = pnv_chip_power8_xscom_core_base;
-    k->xscom_pcba = pnv_chip_power8_xscom_pcba;
-    dc->desc = "PowerNV Chip POWER8NVL";
 
     device_class_set_parent_realize(dc, pnv_chip_power8_realize,
                                     &k->parent_realize);
@@ -3477,8 +3416,6 @@ static void pnv_machine_p10_common_class_init(ObjectClass *oc, const void *data)
     mc->default_cpu_type = POWERPC_CPU_TYPE_NAME("power10_v2.0");
     compat_props_add(mc->compat_props, phb_compat, G_N_ELEMENTS(phb_compat));
 
-    mc->alias = "powernv";
-
     pmc->compat = compat;
     pmc->compat_size = sizeof(compat);
     pmc->max_smt_threads = 4;
@@ -3554,6 +3491,8 @@ static void pnv_machine_power11_class_init(ObjectClass *oc, const void *data)
 
     mc->desc = "IBM PowerNV (Non-Virtualized) Power11";
     mc->default_cpu_type = POWERPC_CPU_TYPE_NAME("power11_v2.0");
+
+    mc->alias = "powernv";
 
     object_class_property_add_bool(oc, "big-core",
                                    pnv_machine_get_big_core,
@@ -3787,9 +3726,6 @@ static const TypeInfo types[] = {
         .instance_size = sizeof(Pnv8Chip),
     },
     DEFINE_PNV8_CHIP_TYPE(TYPE_PNV_CHIP_POWER8, pnv_chip_power8_class_init),
-    DEFINE_PNV8_CHIP_TYPE(TYPE_PNV_CHIP_POWER8E, pnv_chip_power8e_class_init),
-    DEFINE_PNV8_CHIP_TYPE(TYPE_PNV_CHIP_POWER8NVL,
-                          pnv_chip_power8nvl_class_init),
 };
 
 DEFINE_TYPES(types)

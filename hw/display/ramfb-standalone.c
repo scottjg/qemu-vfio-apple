@@ -41,7 +41,7 @@ static void ramfb_realizefn(DeviceState *dev, Error **errp)
 {
     RAMFBStandaloneState *ramfb = RAMFB(dev);
 
-    ramfb->con = graphic_console_init(dev, 0, &wrapper_ops, dev);
+    ramfb->con = qemu_graphic_console_create(dev, 0, &wrapper_ops, dev);
     ramfb->state = ramfb_setup(ramfb->use_legacy_x86_rom, errp);
 }
 

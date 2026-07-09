@@ -230,9 +230,8 @@ static void portio_list_add_1(PortioList *piolist,
     mrpio = MEMORY_REGION_PORTIO_LIST(
                 object_new(TYPE_MEMORY_REGION_PORTIO_LIST));
     mrpio->portio_opaque = piolist->opaque;
-    mrpio->ports = g_malloc0(sizeof(MemoryRegionPortio) * (count + 1));
+    mrpio->ports = g_new0(MemoryRegionPortio, count + 1);
     memcpy(mrpio->ports, pio_init, sizeof(MemoryRegionPortio) * count);
-    memset(mrpio->ports + count, 0, sizeof(MemoryRegionPortio));
 
     /* Adjust the offsets to all be zero-based for the region.  */
     for (i = 0; i < count; ++i) {
@@ -346,8 +345,15 @@ static void memory_region_portio_list_finalize(Object *obj)
 {
     MemoryRegionPortioList *mrpio = MEMORY_REGION_PORTIO_LIST(obj);
 
-    object_unref(&mrpio->mr);
-    g_free(mrpio->ports);
+    /*
+     * This check makes sure any random object_new() (without doing the
+     * rest inits in portio_list_add_1()) will not crash when finalizing.
+     * One example is QMP command qom-list-properties.
+     */
+    if (mrpio->ports) {
+        object_unref(&mrpio->mr);
+        g_free(mrpio->ports);
+    }
 }
 
 static const TypeInfo memory_region_portio_list_info = {

@@ -333,6 +333,9 @@ man_pages = [
     ('tools/qemu-trace-stap', 'qemu-trace-stap',
      'QEMU SystemTap trace tool',
      [], 1),
+    ('tools/qemu-vnc', 'qemu-vnc',
+     'QEMU standalone VNC server',
+     [], 1),
 ]
 man_make_section_directory = False
 

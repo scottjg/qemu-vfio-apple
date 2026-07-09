@@ -84,10 +84,7 @@ void net_stream_data_rs_finalize(SocketReadState *rs)
     if (qemu_send_packet_async(&d->nc, rs->buf,
                                rs->packet_len,
                                net_stream_data_send_completed) == 0) {
-        if (d->ioc_read_tag) {
-            g_source_remove(d->ioc_read_tag);
-            d->ioc_read_tag = 0;
-        }
+        g_clear_handle_id(&d->ioc_read_tag, g_source_remove);
     }
 }
 

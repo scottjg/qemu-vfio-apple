@@ -62,8 +62,6 @@
 
 HVFState *hvf_state;
 
-/* Memory slots */
-
 static void do_hvf_cpu_synchronize_state(CPUState *cpu, run_on_cpu_data arg)
 {
     if (!cpu->vcpu_dirty) {
@@ -247,7 +245,8 @@ int hvf_update_guest_debug(CPUState *cpu)
     return 0;
 }
 
-static int hvf_insert_breakpoint(CPUState *cpu, int type, vaddr addr, vaddr len)
+static int hvf_insert_gdbstub_breakpoint(CPUState *cpu, GdbBreakpointType type,
+                                         vaddr addr, vaddr len)
 {
     struct hvf_sw_breakpoint *bp;
     int err;
@@ -270,7 +269,7 @@ static int hvf_insert_breakpoint(CPUState *cpu, int type, vaddr addr, vaddr len)
 
         QTAILQ_INSERT_HEAD(&hvf_state->hvf_sw_breakpoints, bp, entry);
     } else {
-        err = hvf_arch_insert_hw_breakpoint(addr, len, type);
+        err = hvf_arch_insert_gdbstub_hw_breakpoint(addr, len, type);
         if (err) {
             return err;
         }
@@ -285,7 +284,8 @@ static int hvf_insert_breakpoint(CPUState *cpu, int type, vaddr addr, vaddr len)
     return 0;
 }
 
-static int hvf_remove_breakpoint(CPUState *cpu, int type, vaddr addr, vaddr len)
+static int hvf_remove_gdbstub_breakpoint(CPUState *cpu, GdbBreakpointType type,
+                                         vaddr addr, vaddr len)
 {
     struct hvf_sw_breakpoint *bp;
     int err;
@@ -309,7 +309,7 @@ static int hvf_remove_breakpoint(CPUState *cpu, int type, vaddr addr, vaddr len)
         QTAILQ_REMOVE(&hvf_state->hvf_sw_breakpoints, bp, entry);
         g_free(bp);
     } else {
-        err = hvf_arch_remove_hw_breakpoint(addr, len, type);
+        err = hvf_arch_remove_gdbstub_hw_breakpoint(addr, len, type);
         if (err) {
             return err;
         }
@@ -324,7 +324,7 @@ static int hvf_remove_breakpoint(CPUState *cpu, int type, vaddr addr, vaddr len)
     return 0;
 }
 
-static void hvf_remove_all_breakpoints(CPUState *cpu)
+static void hvf_remove_all_gdbstub_breakpoints(CPUState *cpu)
 {
     struct hvf_sw_breakpoint *bp, *next;
     CPUState *tmpcpu;
@@ -342,7 +342,7 @@ static void hvf_remove_all_breakpoints(CPUState *cpu)
         QTAILQ_REMOVE(&hvf_state->hvf_sw_breakpoints, bp, entry);
         g_free(bp);
     }
-    hvf_arch_remove_all_hw_breakpoints();
+    hvf_arch_remove_all_gdbstub_hw_breakpoints();
 
     CPU_FOREACH(cpu) {
         hvf_update_guest_debug(cpu);
@@ -379,11 +379,10 @@ static void hvf_accel_ops_class_init(ObjectClass *oc, const void *data)
     ops->synchronize_state = hvf_cpu_synchronize_state;
     ops->synchronize_pre_loadvm = hvf_cpu_synchronize_pre_loadvm;
 
-    ops->insert_breakpoint = hvf_insert_breakpoint;
-    ops->remove_breakpoint = hvf_remove_breakpoint;
-    ops->remove_all_breakpoints = hvf_remove_all_breakpoints;
+    ops->insert_gdbstub_breakpoint = hvf_insert_gdbstub_breakpoint;
+    ops->remove_gdbstub_breakpoint = hvf_remove_gdbstub_breakpoint;
+    ops->remove_all_gdbstub_breakpoints = hvf_remove_all_gdbstub_breakpoints;
     ops->update_guest_debug = hvf_update_guest_debug;
-    ops->supports_guest_debug = hvf_arch_supports_guest_debug;
 
     ops->get_vcpu_stats = hvf_get_vcpu_stats;
 };

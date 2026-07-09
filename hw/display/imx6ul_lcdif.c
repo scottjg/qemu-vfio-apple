@@ -203,7 +203,7 @@ static bool imx6ul_lcdif_update_display(void *opaque)
                                src_width, surface_stride(surface), 0,
                                s->invalidate, fn, s, &first, &last);
     if (first >= 0) {
-        dpy_gfx_update(s->con, 0, first, width, last - first + 1);
+        qemu_console_update(s->con, 0, first, width, last - first + 1);
     }
 
     s->invalidate = false;
@@ -301,7 +301,7 @@ static void imx6ul_lcdif_write(void *opaque, hwaddr offset,
         if (!FIELD_EX32(oldv, CTRL, RUN) &&
             FIELD_EX32(s->regs[idx], CTRL, RUN)) {
             s->invalidate = true;
-            graphic_hw_invalidate(s->con);
+            qemu_console_hw_invalidate(s->con);
             imx6ul_lcdif_maybe_schedule_frame(s);
             break;
         }
@@ -318,17 +318,17 @@ static void imx6ul_lcdif_write(void *opaque, hwaddr offset,
         break;
     case A_V4_TRANSFER_COUNT:
         s->invalidate = true;
-        graphic_hw_invalidate(s->con);
+        qemu_console_hw_invalidate(s->con);
         break;
     case A_V4_CUR_BUF:
         s->invalidate = true;
-        graphic_hw_invalidate(s->con);
+        qemu_console_hw_invalidate(s->con);
         break;
     case A_V4_NEXT_BUF:
         s->regs[IMX6UL_LCDIF_REG_V4_CUR_BUF] = s->regs[idx];
         imx6ul_lcdif_frame_done(s);
         s->invalidate = true;
-        graphic_hw_invalidate(s->con);
+        qemu_console_hw_invalidate(s->con);
         imx6ul_lcdif_maybe_schedule_frame(s);
         return;
     case A_AS_NEXT_BUF:
@@ -411,7 +411,7 @@ static void imx6ul_lcdif_realize(DeviceState *dev, Error **errp)
                           TYPE_IMX6UL_LCDIF, LCDIF_MMIO_SIZE);
     sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->iomem);
     sysbus_init_irq(SYS_BUS_DEVICE(dev), &s->irq);
-    s->con = graphic_console_init(dev, 0, &imx6ul_lcdif_graphic_ops, s);
+    s->con = qemu_graphic_console_create(dev, 0, &imx6ul_lcdif_graphic_ops, s);
 }
 
 static void imx6ul_lcdif_unrealize(DeviceState *dev)
@@ -423,7 +423,7 @@ static void imx6ul_lcdif_unrealize(DeviceState *dev)
     s->frame_timer = NULL;
 
     if (s->con) {
-        graphic_console_close(s->con);
+        qemu_graphic_console_close(s->con);
         s->con = NULL;
     }
 }

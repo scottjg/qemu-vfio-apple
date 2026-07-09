@@ -45,6 +45,7 @@ static int ati_bpp_from_datatype(const ATIVGAState *s)
 }
 
 typedef struct {
+    VGACommonState *vga;
     int bpp;
     uint32_t rop3;
     bool host_data_active;
@@ -52,8 +53,6 @@ typedef struct {
     bool top_to_bottom;
     bool need_swap;
     uint32_t frgd_clr;
-    const uint8_t *palette;
-    const uint8_t *vram_end;
     QemuRect scissor;
 
     QemuRect dst;
@@ -66,26 +65,38 @@ typedef struct {
     const uint8_t *src_bits;
 } ATI2DCtx;
 
-static void ati_set_dirty(VGACommonState *vga, const ATI2DCtx *ctx)
+static void ati_set_dirty(const ATI2DCtx *ctx)
 {
+    VGACommonState *vga = ctx->vga;
     DisplaySurface *ds = qemu_console_surface(vga->con);
+    unsigned int bypp = ctx->bpp / 8;
+    hwaddr dirty_start = ctx->dst_offset + ctx->dst.x * bypp +
+                         ctx->dst.y * ctx->dst_stride;
+    hwaddr dirty_end = dirty_start + ctx->dst.width * bypp +
+                       (ctx->dst.height - 1) * ctx->dst_stride;
+    /*
+     * The blit may be outside of the visible screen (e.g. virtual desktops.)
+     * Dirty only the intersection of the visible screen and the blit.
+     */
+    hwaddr vis_start = vga->vbe_start_addr * 4;
+    hwaddr vis_end = vis_start + vga->vbe_regs[VBE_DISPI_INDEX_YRES] *
+                       vga->vbe_line_offset;
+    hwaddr start = MAX(vis_start, dirty_start);
+    hwaddr end = MIN(vis_end, dirty_end);
 
     (void)ds;
     DPRINTF("%p %u ds: %p %d %d rop: %x\n", vga->vram_ptr, vga->vbe_start_addr,
             surface_data(ds), surface_stride(ds), surface_bits_per_pixel(ds),
             ctx->rop3 >> 16);
-    if (ctx->dst_bits >= vga->vram_ptr + vga->vbe_start_addr &&
-        ctx->dst_bits < vga->vram_ptr + vga->vbe_start_addr +
-        vga->vbe_regs[VBE_DISPI_INDEX_YRES] * vga->vbe_line_offset) {
-        memory_region_set_dirty(&vga->vram,
-                                vga->vbe_start_addr + ctx->dst_offset +
-                                ctx->dst.y * ctx->dst_stride,
-                                ctx->dst.height * ctx->dst_stride);
+
+    if (start < end) {
+        memory_region_set_dirty(&vga->vram, start, end - start);
     }
 }
 
-static void setup_2d_blt_ctx(const ATIVGAState *s, ATI2DCtx *ctx)
+static void setup_2d_blt_ctx(ATIVGAState *s, ATI2DCtx *ctx)
 {
+    ctx->vga = &s->vga;
     ctx->bpp = ati_bpp_from_datatype(s);
     ctx->rop3 = s->regs.dp_mix & GMC_ROP3_MASK;
     ctx->host_data_active = s->host_data.active;
@@ -93,9 +104,7 @@ static void setup_2d_blt_ctx(const ATIVGAState *s, ATI2DCtx *ctx)
     ctx->top_to_bottom = s->regs.dp_cntl & DST_Y_TOP_TO_BOTTOM;
     ctx->need_swap = (HOST_BIG_ENDIAN != s->vga.big_endian_fb);
     ctx->frgd_clr = s->regs.dp_brush_frgd_clr;
-    ctx->palette = s->vga.palette;
     ctx->dst_offset = s->regs.dst_offset;
-    ctx->vram_end = s->vga.vram_ptr + s->vga.vram_size;
 
     ctx->scissor.width = s->regs.sc_right - s->regs.sc_left + 1;
     ctx->scissor.height = s->regs.sc_bottom - s->regs.sc_top + 1;
@@ -143,10 +152,11 @@ static uint32_t make_filler(int bpp, uint32_t color)
     return color;
 }
 
-static bool ati_2d_do_blt(ATI2DCtx *ctx, uint8_t use_pixman)
+static bool ati_2d_do_blt(const ATI2DCtx *ctx, uint8_t use_pixman)
 {
     QemuRect vis_src, vis_dst;
     unsigned int x, y, i, j, bypp = ctx->bpp / 8;
+    const uint8_t *vram_end = ctx->vga->vram_ptr + ctx->vga->vram_size;
 
     if (!ctx->bpp) {
         qemu_log_mask(LOG_GUEST_ERROR, "Invalid bpp\n");
@@ -157,9 +167,8 @@ static bool ati_2d_do_blt(ATI2DCtx *ctx, uint8_t use_pixman)
         return false;
     }
     if (ctx->dst.x > 0x3fff || ctx->dst.y > 0x3fff ||
-        ctx->dst_bits >= ctx->vram_end - bypp ||
-        ctx->dst_bits + ctx->dst.x * bypp + (ctx->dst.y + ctx->dst.height) *
-        ctx->dst_stride >= ctx->vram_end - bypp) {
+        ctx->dst_bits >= vram_end - bypp || ctx->dst_bits + ctx->dst.x * bypp +
+        (ctx->dst.y + ctx->dst.height) * ctx->dst_stride >= vram_end - bypp) {
         qemu_log_mask(LOG_UNIMP, "blt outside vram not implemented\n");
         return false;
     }
@@ -196,9 +205,9 @@ static bool ati_2d_do_blt(ATI2DCtx *ctx, uint8_t use_pixman)
         }
         if (!ctx->host_data_active &&
             (vis_src.x > 0x3fff || vis_src.y > 0x3fff ||
-            ctx->src_bits >= ctx->vram_end - bypp ||
+            ctx->src_bits >= vram_end - bypp ||
             ctx->src_bits + vis_src.x * bypp + (vis_src.y + vis_dst.height) *
-            ctx->src_stride >= ctx->vram_end - bypp)) {
+            ctx->src_stride >= vram_end - bypp)) {
             qemu_log_mask(LOG_UNIMP, "blt outside vram not implemented\n");
             return false;
         }
@@ -265,6 +274,7 @@ static bool ati_2d_do_blt(ATI2DCtx *ctx, uint8_t use_pixman)
     case ROP3_BLACKNESS:
     case ROP3_WHITENESS:
     {
+        const uint8_t *palette = ctx->vga->palette;
         uint32_t filler = 0;
 
         if (ctx->bpp == 24) {
@@ -276,14 +286,12 @@ static bool ati_2d_do_blt(ATI2DCtx *ctx, uint8_t use_pixman)
             filler = make_filler(ctx->bpp, ctx->frgd_clr);
             break;
         case ROP3_BLACKNESS:
-            filler = 0xffUL << 24 | rgb_to_pixel32(ctx->palette[0],
-                                                   ctx->palette[1],
-                                                   ctx->palette[2]);
+            filler = 0xffUL << 24 | rgb_to_pixel32(palette[0], palette[1],
+                                                   palette[2]);
             break;
         case ROP3_WHITENESS:
-            filler = 0xffUL << 24 | rgb_to_pixel32(ctx->palette[3],
-                                                   ctx->palette[4],
-                                                   ctx->palette[5]);
+            filler = 0xffUL << 24 | rgb_to_pixel32(palette[3], palette[4],
+                                                   palette[5]);
             break;
         }
         DPRINTF("pixman_fill(%p, %ld, %d, %d, %d, %d, %d, %x)\n",
@@ -337,7 +345,7 @@ void ati_2d_blt(ATIVGAState *s)
     }
     setup_2d_blt_ctx(s, &ctx);
     if (ati_2d_do_blt(&ctx, s->use_pixman)) {
-        ati_set_dirty(&s->vga, &ctx);
+        ati_set_dirty(&ctx);
     }
 }
 
@@ -367,6 +375,11 @@ bool ati_host_data_flush(ATIVGAState *s)
 
     setup_2d_blt_ctx(s, &ctx);
 
+    if (!ctx.bpp) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "host_data_blt: invalid bpp from datatype\n");
+        return false;
+    }
     if (ctx.bpp == 24) {
         qemu_log_mask(LOG_UNIMP,
                       "host_data_blt: unsupported in 24 bits mode\n");
@@ -431,7 +444,7 @@ bool ati_host_data_flush(ATIVGAState *s)
         DPRINTF("blt %dpx span @ row: %d, col: %d to dst (%d,%d)\n",
                 pix_in_scanline, row, col, chunk.dst.x, chunk.dst.y);
         if (ati_2d_do_blt(&chunk, s->use_pixman)) {
-            ati_set_dirty(&s->vga, &chunk);
+            ati_set_dirty(&chunk);
         }
         idx += pix_in_scanline;
         col += pix_in_scanline;
@@ -442,7 +455,6 @@ bool ati_host_data_flush(ATIVGAState *s)
     }
 
     /* Track state of the overall blit for use by the next flush */
-    s->host_data.next = 0;
     s->host_data.row = row;
     s->host_data.col = col;
     if (s->host_data.row >= ctx.dst.height) {

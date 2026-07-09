@@ -131,7 +131,7 @@ void gd_gl_area_draw(VirtualConsole *vc)
                 qemu_set_fd_handler(fence_fd, gd_hw_gl_flushed, NULL, vc);
                 return;
             }
-            graphic_hw_gl_block(vc->gfx.dcl.con, false);
+            qemu_console_hw_gl_block(vc->gfx.dcl.con, false);
         }
 #endif
     } else {
@@ -195,7 +195,7 @@ void gd_gl_area_refresh(DisplayChangeListener *dcl)
         }
     }
 
-    graphic_hw_update(dcl->con);
+    qemu_console_hw_update(dcl->con);
 
     if (vc->gfx.glupdates) {
         vc->gfx.glupdates = 0;
@@ -347,7 +347,7 @@ void gd_gl_area_scanout_flush(DisplayChangeListener *dcl,
 
     if (vc->gfx.guest_fb.dmabuf &&
         !qemu_dmabuf_get_draw_submitted(vc->gfx.guest_fb.dmabuf)) {
-        graphic_hw_gl_block(vc->gfx.dcl.con, true);
+        qemu_console_hw_gl_block(vc->gfx.dcl.con, true);
         qemu_dmabuf_set_draw_submitted(vc->gfx.guest_fb.dmabuf, true);
         gtk_gl_area_set_scanout_mode(vc, true);
     }

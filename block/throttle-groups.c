@@ -960,9 +960,15 @@ static void throttle_group_get_limits(Object *obj, Visitor *v,
     visit_type_ThrottleLimits(v, name, &argp, errp);
 }
 
-static bool throttle_group_can_be_deleted(UserCreatable *uc)
+static bool throttle_group_prepare_delete(UserCreatable *uc, Error **errp)
 {
-    return OBJECT(uc)->ref == 1;
+    if (OBJECT(uc)->ref > 1) {
+        error_setg(errp,
+                   "Cannot delete throttle group '%s' with active references",
+                   object_get_canonical_path_component(OBJECT(uc)));
+        return false;
+    }
+    return true;
 }
 
 static void throttle_group_obj_class_init(ObjectClass *klass,
@@ -972,7 +978,7 @@ static void throttle_group_obj_class_init(ObjectClass *klass,
     UserCreatableClass *ucc = USER_CREATABLE_CLASS(klass);
 
     ucc->complete = throttle_group_obj_complete;
-    ucc->can_be_deleted = throttle_group_can_be_deleted;
+    ucc->prepare_delete = throttle_group_prepare_delete;
 
     /* individual properties */
     for (i = 0; i < sizeof(properties) / sizeof(ThrottleParamInfo); i++) {

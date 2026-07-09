@@ -368,6 +368,7 @@ our @typeList = (
 # Match text found in common license boilerplate comments:
 # for new files the SPDX-License-Identifier line is sufficient.
 our @LICENSE_BOILERPLATE = (
+	"licensed under the GPL version 2",
 	"licensed under the terms of the GNU GPL",
 	"under the terms of the GNU General Public License",
 	"under the terms of the GNU Lesser General Public",
@@ -2282,7 +2283,8 @@ sub process {
 			#print "line<$line> prevline<$prevline> indent<$indent> sindent<$sindent> check<$check> continuation<$continuation> s<$s> cond_lines<$cond_lines> stat_real<$stat_real> stat<$stat>\n";
 
 			if ($check && (($sindent % 4) != 0 ||
-			    ($sindent <= $indent && $s ne ''))) {
+			    ($sindent <= $indent &&
+			     $s !~ /^\s*(?:\}|\{|else\b)/))) {
 				ERROR("suspect code indent for conditional statements ($indent, $sindent)\n" . $herecurr . "$stat_real\n");
 			}
 		}
@@ -2421,7 +2423,8 @@ sub process {
 #  3. inside a curly brace -- = { [0...10] = 5 }
 #  4. after a comma -- [1] = 5, [2] = 6
 #  5. in a macro definition -- #define abc(x) [x] = y
-		while ($line =~ /(.*?\s)\[/g) {
+		my $cpp = $realfile =~ /(\.cpp)$/;
+		while (!$cpp && $line =~ /(.*?\s)\[/g) {
 			my ($where, $prefix) = ($-[1], $1);
 			if ($prefix !~ /$Type\s+$/ &&
 			    ($where != 0 || $prefix !~ /^.\s+$/) &&
@@ -2617,6 +2620,31 @@ sub process {
 
 						# Ignore :: in C++
 						if ($op eq '::') {
+							$ok = 1;
+						}
+
+						# Ignore * in C++: templates and
+						# pointer types are incorrectly
+						# flagged. Example:
+						# static_cast<T*>
+						if ($op eq '*') {
+							$ok = 1;
+						}
+
+						# Ignore & in C++: & means a
+						# reference, and this create
+						# issues with some constructions.
+						# Example:
+						# auto &[first, second] = pair;
+						if ($op eq '&') {
+							$ok = 1;
+						}
+
+						# Ignore >> in C++
+						# checkpatch is confused by
+						# >> closing templates. Example:
+						# vector<pair<A, B>>
+						if ($op eq '>>') {
 							$ok = 1;
 						}
 					}

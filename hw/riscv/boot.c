@@ -18,6 +18,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/bswap.h"
 #include "qemu/datadir.h"
 #include "qemu/units.h"
 #include "qemu/error-report.h"
@@ -69,9 +70,25 @@ char *riscv_plic_hart_config_string(int hart_count)
 
 void riscv_boot_info_init(RISCVBootInfo *info, RISCVHartArrayState *harts)
 {
+    info->ram_low_start = 0;
+    info->ram_low_size = 0;
     info->kernel_size = 0;
     info->initrd_size = 0;
     info->is_32bit = riscv_is_32bit(harts);
+}
+
+/*
+ * This can be used instead of riscv_boot_info_init() if the machine has
+ * discontiguous physical memory. The low memory range specified will be
+ * used to place firmware images.
+ */
+void riscv_boot_info_init_discontig_mem(RISCVBootInfo *info,
+                                        RISCVHartArrayState *harts,
+                                        hwaddr low_start, hwaddr low_size)
+{
+    riscv_boot_info_init(info, harts);
+    info->ram_low_start = low_start;
+    info->ram_low_size = low_size;
 }
 
 vaddr riscv_calc_kernel_start_addr(RISCVBootInfo *info,
@@ -134,6 +151,7 @@ char *riscv_find_firmware(const char *firmware_filename,
 }
 
 hwaddr riscv_find_and_load_firmware(MachineState *machine,
+                                    RISCVBootInfo *info,
                                     const char *default_machine_firmware,
                                     hwaddr *firmware_load_addr,
                                     symbol_fn_t sym_cb)
@@ -146,7 +164,8 @@ hwaddr riscv_find_and_load_firmware(MachineState *machine,
 
     if (firmware_filename) {
         /* If not "none" load the firmware */
-        firmware_end_addr = riscv_load_firmware(firmware_filename,
+        firmware_end_addr = riscv_load_firmware(machine, info,
+                                                firmware_filename,
                                                 firmware_load_addr, sym_cb);
         g_free(firmware_filename);
     }
@@ -154,10 +173,13 @@ hwaddr riscv_find_and_load_firmware(MachineState *machine,
     return firmware_end_addr;
 }
 
-hwaddr riscv_load_firmware(const char *firmware_filename,
+hwaddr riscv_load_firmware(MachineState *machine,
+                           const RISCVBootInfo *info,
+                           const char *firmware_filename,
                            hwaddr *firmware_load_addr,
                            symbol_fn_t sym_cb)
 {
+    uint64_t mem_size = info->ram_low_size ?: machine->ram_size;
     uint64_t firmware_entry, firmware_end;
     ssize_t firmware_size;
 
@@ -186,7 +208,7 @@ hwaddr riscv_load_firmware(const char *firmware_filename,
 
     firmware_size = load_image_targphys_as(firmware_filename,
                                            *firmware_load_addr,
-                                           current_machine->ram_size, NULL,
+                                           mem_size, NULL,
                                            NULL);
 
     if (firmware_size > 0) {
@@ -201,7 +223,7 @@ hwaddr riscv_load_firmware(const char *firmware_filename,
 static void riscv_load_initrd(MachineState *machine, RISCVBootInfo *info)
 {
     const char *filename = machine->initrd_filename;
-    uint64_t mem_size = machine->ram_size;
+    uint64_t mem_size = info->ram_low_size ?: machine->ram_size;
     void *fdt = machine->fdt;
     hwaddr start, end;
     ssize_t size;
@@ -247,6 +269,7 @@ void riscv_load_kernel(MachineState *machine,
                        bool load_initrd,
                        symbol_fn_t sym_cb)
 {
+    uint64_t mem_size = info->ram_low_size ?: machine->ram_size;
     const char *kernel_filename = machine->kernel_filename;
     ssize_t kernel_size;
     void *fdt = machine->fdt;
@@ -278,7 +301,7 @@ void riscv_load_kernel(MachineState *machine,
     }
 
     kernel_size = load_image_targphys_as(kernel_filename, kernel_start_addr,
-                                         current_machine->ram_size, NULL, NULL);
+                                         mem_size, NULL, NULL);
     if (kernel_size > 0) {
         info->kernel_size = kernel_size;
         info->image_low_addr = kernel_start_addr;
@@ -374,7 +397,7 @@ uint64_t riscv_compute_fdt_addr(hwaddr dram_base, hwaddr dram_size,
     dtb_start = QEMU_ALIGN_DOWN(temp - fdtsize, 2 * MiB);
 
     if (dtb_start_limit && (dtb_start < dtb_start_limit)) {
-        error_report("No enough memory to place DTB after kernel/initrd");
+        error_report("Not enough memory to place DTB after kernel/initrd");
         exit(1);
     }
 
@@ -406,21 +429,31 @@ void riscv_rom_copy_firmware_info(MachineState *machine,
     struct fw_dynamic_info64 dinfo64;
     void *dinfo_ptr = NULL;
     size_t dinfo_len;
+    const bool rv32 = riscv_is_32bit(harts);
+    const bool be = harts->harts[0].cfg.big_endian;
 
-    if (riscv_is_32bit(harts)) {
-        dinfo32.magic = cpu_to_le32(FW_DYNAMIC_INFO_MAGIC_VALUE);
-        dinfo32.version = cpu_to_le32(FW_DYNAMIC_INFO_VERSION);
-        dinfo32.next_mode = cpu_to_le32(FW_DYNAMIC_INFO_NEXT_MODE_S);
-        dinfo32.next_addr = cpu_to_le32(kernel_entry);
+    if (rv32) {
+        dinfo32.magic = be ? cpu_to_be32(FW_DYNAMIC_INFO_MAGIC_VALUE)
+                           : cpu_to_le32(FW_DYNAMIC_INFO_MAGIC_VALUE);
+        dinfo32.version = be ? cpu_to_be32(FW_DYNAMIC_INFO_VERSION)
+                             : cpu_to_le32(FW_DYNAMIC_INFO_VERSION);
+        dinfo32.next_mode = be ? cpu_to_be32(FW_DYNAMIC_INFO_NEXT_MODE_S)
+                               : cpu_to_le32(FW_DYNAMIC_INFO_NEXT_MODE_S);
+        dinfo32.next_addr = be ? cpu_to_be32(kernel_entry)
+                               : cpu_to_le32(kernel_entry);
         dinfo32.options = 0;
         dinfo32.boot_hart = 0;
         dinfo_ptr = &dinfo32;
         dinfo_len = sizeof(dinfo32);
     } else {
-        dinfo64.magic = cpu_to_le64(FW_DYNAMIC_INFO_MAGIC_VALUE);
-        dinfo64.version = cpu_to_le64(FW_DYNAMIC_INFO_VERSION);
-        dinfo64.next_mode = cpu_to_le64(FW_DYNAMIC_INFO_NEXT_MODE_S);
-        dinfo64.next_addr = cpu_to_le64(kernel_entry);
+        dinfo64.magic = be ? cpu_to_be64(FW_DYNAMIC_INFO_MAGIC_VALUE)
+                           : cpu_to_le64(FW_DYNAMIC_INFO_MAGIC_VALUE);
+        dinfo64.version = be ? cpu_to_be64(FW_DYNAMIC_INFO_VERSION)
+                             : cpu_to_le64(FW_DYNAMIC_INFO_VERSION);
+        dinfo64.next_mode = be ? cpu_to_be64(FW_DYNAMIC_INFO_NEXT_MODE_S)
+                               : cpu_to_le64(FW_DYNAMIC_INFO_NEXT_MODE_S);
+        dinfo64.next_addr = be ? cpu_to_be64(kernel_entry)
+                               : cpu_to_le64(kernel_entry);
         dinfo64.options = 0;
         dinfo64.boot_hart = 0;
         dinfo_ptr = &dinfo64;
@@ -444,55 +477,51 @@ void riscv_rom_copy_firmware_info(MachineState *machine,
                            &address_space_memory);
 }
 
+#define CODE_WORDS 6
+#define DATA_WORDS 4
+
 void riscv_setup_rom_reset_vec(MachineState *machine, RISCVHartArrayState *harts,
                                hwaddr start_addr,
                                hwaddr rom_base, hwaddr rom_size,
                                uint64_t kernel_entry,
                                uint64_t fdt_load_addr)
 {
-    int i;
-    uint32_t start_addr_hi32 = 0x00000000;
-    uint32_t fdt_load_addr_hi32 = 0x00000000;
+    const bool rv32 = riscv_is_32bit(harts);
+    const bool big_endian = harts->harts[0].cfg.big_endian;
+    uint32_t reset_vec[CODE_WORDS + DATA_WORDS];
 
-    if (!riscv_is_32bit(harts)) {
-        start_addr_hi32 = start_addr >> 32;
-        fdt_load_addr_hi32 = fdt_load_addr >> 32;
-    }
-    /* reset vector */
-    uint32_t reset_vec[10] = {
-        0x00000297,                  /* 1:  auipc  t0, %pcrel_hi(fw_dyn) */
-        0x02828613,                  /*     addi   a2, t0, %pcrel_lo(1b) */
-        0xf1402573,                  /*     csrr   a0, mhartid  */
-        0,
-        0,
-        0x00028067,                  /*     jr     t0 */
-        start_addr,                  /* start: .dword */
-        start_addr_hi32,
-        fdt_load_addr,               /* fdt_laddr: .dword */
-        fdt_load_addr_hi32,
-                                     /* fw_dyn: */
-    };
-    if (riscv_is_32bit(harts)) {
-        reset_vec[3] = 0x0202a583;   /*     lw     a1, 32(t0) */
-        reset_vec[4] = 0x0182a283;   /*     lw     t0, 24(t0) */
+    /* .text (RISC-V instructions are always little-endian) */
+    reset_vec[0] = const_le32(0x00000297);      /* 1:  auipc  t0, %pcrel_hi(fw_dyn) */
+    reset_vec[1] = const_le32(0x02828613);      /*     addi   a2, t0, %pcrel_lo(1b) */
+    reset_vec[2] = const_le32(0xf1402573);      /*     csrr   a0, mhartid  */
+    if (harts->harts[0].cfg.ext_zicsr) {
+        reset_vec[2] = const_le32(0xf1402573);  /*     csrr   a0, mhartid  */
     } else {
-        reset_vec[3] = 0x0202b583;   /*     ld     a1, 32(t0) */
-        reset_vec[4] = 0x0182b283;   /*     ld     t0, 24(t0) */
-    }
-
-    if (!harts->harts[0].cfg.ext_zicsr) {
         /*
          * The Zicsr extension has been disabled, so let's ensure we don't
          * run the CSR instruction. Let's fill the address with a non
          * compressed nop.
          */
-        reset_vec[2] = 0x00000013;   /*     addi   x0, x0, 0 */
+        reset_vec[2] = const_le32(0x00000013);  /*     addi   x0, x0, 0 */
+    }
+    if (rv32) {
+        reset_vec[3] = const_le32(0x0202a583);  /*     lw     a1, 32(t0) */
+        reset_vec[4] = const_le32(0x0182a283);  /*     lw     t0, 24(t0) */
+    } else {
+        reset_vec[3] = const_le32(0x0202b583);  /*     ld     a1, 32(t0) */
+        reset_vec[4] = const_le32(0x0182b283);  /*     ld     t0, 24(t0) */
+    }
+    reset_vec[5] = const_le32(0x00028067);      /*     jr     t0 */
+
+    /* .data (must match the firmware's data endianness) */
+    if (big_endian) {
+        stq_be_p(&reset_vec[6], start_addr);    /* start:       .dword */
+        stq_be_p(&reset_vec[8], fdt_load_addr); /* fdt_laddr:   .dword */
+    } else {
+        stq_le_p(&reset_vec[6], start_addr);
+        stq_le_p(&reset_vec[8], fdt_load_addr);
     }
 
-    /* copy in the reset vector in little_endian byte order */
-    for (i = 0; i < ARRAY_SIZE(reset_vec); i++) {
-        reset_vec[i] = cpu_to_le32(reset_vec[i]);
-    }
     rom_add_blob_fixed_as("mrom.reset", reset_vec, sizeof(reset_vec),
                           rom_base, &address_space_memory);
     riscv_rom_copy_firmware_info(machine, harts,
@@ -505,10 +534,11 @@ void riscv_setup_direct_kernel(hwaddr kernel_addr, hwaddr fdt_addr)
 {
     CPUState *cs;
 
-    for (cs = first_cpu; cs; cs = CPU_NEXT(cs)) {
-        RISCVCPU *riscv_cpu = RISCV_CPU(cs);
-        riscv_cpu->env.kernel_addr = kernel_addr;
-        riscv_cpu->env.fdt_addr = fdt_addr;
+    CPU_FOREACH(cs) {
+        CPURISCVState *env = cpu_env(cs);
+
+        env->kernel_addr = kernel_addr;
+        env->fdt_addr = fdt_addr;
     }
 }
 

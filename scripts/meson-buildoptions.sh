@@ -121,7 +121,6 @@ meson_options_help() {
   printf "%s\n" '  gcrypt          libgcrypt cryptography support'
   printf "%s\n" '  gettext         Localization of the GTK+ user interface'
   printf "%s\n" '  gio             use libgio for D-Bus support'
-  printf "%s\n" '  glusterfs       Glusterfs block device driver'
   printf "%s\n" '  gnutls          GNUTLS cryptography support'
   printf "%s\n" '  gtk             GTK+ user interface'
   printf "%s\n" '  guest-agent     Build QEMU Guest Agent'
@@ -173,6 +172,7 @@ meson_options_help() {
   printf "%s\n" '  qatzip          QATzip compression support'
   printf "%s\n" '  qcow1           qcow1 image format support'
   printf "%s\n" '  qed             qed image format support'
+  printf "%s\n" '  qemu-vnc        standalone VNC server over D-Bus'
   printf "%s\n" '  qga-vss         build QGA VSS support (broken with MinGW)'
   printf "%s\n" '  qpl             Query Processing Library support'
   printf "%s\n" '  rbd             Ceph block device driver'
@@ -329,8 +329,6 @@ _meson_option_parse() {
     --disable-gettext) printf "%s" -Dgettext=disabled ;;
     --enable-gio) printf "%s" -Dgio=enabled ;;
     --disable-gio) printf "%s" -Dgio=disabled ;;
-    --enable-glusterfs) printf "%s" -Dglusterfs=enabled ;;
-    --disable-glusterfs) printf "%s" -Dglusterfs=disabled ;;
     --enable-gnutls) printf "%s" -Dgnutls=enabled ;;
     --disable-gnutls) printf "%s" -Dgnutls=disabled ;;
     --enable-gtk) printf "%s" -Dgtk=enabled ;;
@@ -455,6 +453,8 @@ _meson_option_parse() {
     --qemu-ga-manufacturer=*) quote_sh "-Dqemu_ga_manufacturer=$2" ;;
     --qemu-ga-version=*) quote_sh "-Dqemu_ga_version=$2" ;;
     --with-suffix=*) quote_sh "-Dqemu_suffix=$2" ;;
+    --enable-qemu-vnc) printf "%s" -Dqemu_vnc=enabled ;;
+    --disable-qemu-vnc) printf "%s" -Dqemu_vnc=disabled ;;
     --enable-qga-vss) printf "%s" -Dqga_vss=enabled ;;
     --disable-qga-vss) printf "%s" -Dqga_vss=disabled ;;
     --enable-qom-cast-debug) printf "%s" -Dqom_cast_debug=true ;;

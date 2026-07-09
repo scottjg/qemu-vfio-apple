@@ -557,7 +557,7 @@ static void disable_gdbstub(CPUState *thread_cpu)
     close(gdbserver_user_state.fd);
     gdbserver_user_state.fd = -1;
     CPU_FOREACH(cpu) {
-        cpu_breakpoint_remove_all(cpu, BP_GDB);
+        gdb_breakpoint_remove_all(cpu);
         /* no cpu_watchpoint_remove_all for user-mode */
         cpu_single_step(cpu, 0);
     }
@@ -786,23 +786,12 @@ unsigned int gdb_get_max_cpus(void)
     return max_cpus;
 }
 
-/* replay not supported for user-mode */
-bool gdb_can_reverse(void)
-{
-    return false;
-}
-
 /*
  * Break/Watch point helpers
  */
 
-bool gdb_supports_guest_debug(void)
-{
-    /* user-mode == TCG == supported */
-    return true;
-}
-
-int gdb_breakpoint_insert(CPUState *cs, int type, vaddr addr, vaddr len)
+int gdb_breakpoint_insert(CPUState *cs, GdbBreakpointType type,
+                          vaddr addr, vaddr len)
 {
     CPUState *cpu;
     int err = 0;
@@ -823,7 +812,8 @@ int gdb_breakpoint_insert(CPUState *cs, int type, vaddr addr, vaddr len)
     }
 }
 
-int gdb_breakpoint_remove(CPUState *cs, int type, vaddr addr, vaddr len)
+int gdb_breakpoint_remove(CPUState *cs, GdbBreakpointType type,
+                          vaddr addr, vaddr len)
 {
     CPUState *cpu;
     int err = 0;

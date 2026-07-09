@@ -282,8 +282,8 @@ static const uint32_t dw_i3c_resets[DW_I3C_NR_REGS] = {
     [R_QUEUE_THLD_CTRL]             = 0x01000101,
     [R_DATA_BUFFER_THLD_CTRL]       = 0x01010100,
     [R_SLV_EVENT_CTRL]              = 0x0000000b,
-    [R_QUEUE_STATUS_LEVEL]          = 0x00000002,
-    [R_DATA_BUFFER_STATUS_LEVEL]    = 0x00000010,
+    [R_QUEUE_STATUS_LEVEL]          = 0x00000010,
+    [R_DATA_BUFFER_STATUS_LEVEL]    = 0x00000040,
     [R_PRESENT_STATE]               = 0x00000003,
     [R_I3C_VER_ID]                  = 0x3130302a,
     [R_I3C_VER_TYPE]                = 0x6c633033,
@@ -947,6 +947,10 @@ static void dw_i3c_reset(DeviceState *dev)
                      s->cfg.dev_char_table_pointer);
     ARRAY_FIELD_DP32(s->regs, DEV_CHAR_TABLE_POINTER, DEV_CHAR_TABLE_DEPTH,
                      s->cfg.dev_char_table_depth);
+    ARRAY_FIELD_DP32(s->regs, QUEUE_STATUS_LEVEL, CMD_QUEUE_EMPTY_LOC,
+                     s->cfg.cmd_resp_queue_capacity_words);
+    ARRAY_FIELD_DP32(s->regs, DATA_BUFFER_STATUS_LEVEL, TX_BUF_EMPTY_LOC,
+                     s->cfg.tx_rx_queue_capacity_words);
 
     dw_i3c_cmd_queue_reset(s);
     dw_i3c_resp_queue_reset(s);
@@ -1459,11 +1463,10 @@ static void dw_i3c_update_char_table(DWI3C *s, uint8_t offset, uint64_t pid,
                                           P_DEV_CHAR_TABLE_START_ADDR) /
                                           sizeof(uint32_t)) +
                                           (offset * sizeof(uint32_t));
-    s->regs[dev_index] = pid & 0xffffffff;
-    pid >>= 32;
+    s->regs[dev_index] = (pid >> 16) & 0xffffffff;
     s->regs[dev_index + 1] = FIELD_DP32(s->regs[dev_index + 1],
                                         DEVICE_CHARACTERISTIC_TABLE_LOC2,
-                                        MSB_PID, pid);
+                                        MSB_PID, pid & 0xffff);
     s->regs[dev_index + 2] = FIELD_DP32(s->regs[dev_index + 2],
                                         DEVICE_CHARACTERISTIC_TABLE_LOC3, DCR,
                                         dcr);
@@ -1507,10 +1510,9 @@ static void dw_i3c_addr_assign_cmd(DWI3C *s, DWI3CAddrAssignCmd cmd)
     for (i = 0; i < cmd.dev_count; i++) {
         uint8_t addr = dw_i3c_target_addr(s, cmd.dev_index + i);
         union {
-            uint64_t pid:48;
-            uint8_t bcr;
-            uint8_t dcr;
+            uint64_t d;
             uint32_t w[2];
+            /* Per I3C spec: b[0]=PID MSB, b[5]=PID LSB, b[6]=BCR, b[7]=DCR */
             uint8_t b[8];
         } target_info;
 
@@ -1544,9 +1546,9 @@ static void dw_i3c_addr_assign_cmd(DWI3C *s, DWI3CAddrAssignCmd cmd)
             err = DW_I3C_RESP_QUEUE_ERR_DAA_NACK;
             break;
         }
-        dw_i3c_update_char_table(s, cmd.dev_index + i,
-                                            target_info.pid, target_info.bcr,
-                                            target_info.dcr, addr);
+        uint64_t pid = be64_to_cpu(target_info.d) >> 16;
+        dw_i3c_update_char_table(s, cmd.dev_index + i, pid, target_info.b[6],
+                                 target_info.b[7], addr);
 
         /* Push the PID, BCR, and DCR to the RX queue. */
         dw_i3c_push_rx(s, target_info.w[0]);
@@ -1795,6 +1797,10 @@ static void dw_i3c_reset_enter(Object *obj, ResetType type)
                      s->cfg.dev_char_table_pointer);
     ARRAY_FIELD_DP32(s->regs, DEV_CHAR_TABLE_POINTER, DEV_CHAR_TABLE_DEPTH,
                      s->cfg.dev_char_table_depth);
+    ARRAY_FIELD_DP32(s->regs, QUEUE_STATUS_LEVEL, CMD_QUEUE_EMPTY_LOC,
+                     s->cfg.cmd_resp_queue_capacity_words);
+    ARRAY_FIELD_DP32(s->regs, DATA_BUFFER_STATUS_LEVEL, TX_BUF_EMPTY_LOC,
+                     s->cfg.tx_rx_queue_capacity_words);
 }
 
 static void dw_i3c_realize(DeviceState *dev, Error **errp)
@@ -1808,14 +1814,14 @@ static void dw_i3c_realize(DeviceState *dev, Error **errp)
                           DW_I3C_NR_REGS << 2);
     sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->mr);
 
-    fifo32_create(&s->cmd_queue, s->cfg.cmd_resp_queue_capacity_bytes);
-    fifo32_create(&s->resp_queue, s->cfg.cmd_resp_queue_capacity_bytes);
-    fifo32_create(&s->tx_queue, s->cfg.tx_rx_queue_capacity_bytes);
-    fifo32_create(&s->rx_queue, s->cfg.tx_rx_queue_capacity_bytes);
-    fifo32_create(&s->ibi_queue, s->cfg.ibi_queue_capacity_bytes);
+    fifo32_create(&s->cmd_queue, s->cfg.cmd_resp_queue_capacity_words);
+    fifo32_create(&s->resp_queue, s->cfg.cmd_resp_queue_capacity_words);
+    fifo32_create(&s->tx_queue, s->cfg.tx_rx_queue_capacity_words);
+    fifo32_create(&s->rx_queue, s->cfg.tx_rx_queue_capacity_words);
+    fifo32_create(&s->ibi_queue, s->cfg.ibi_queue_capacity_words);
     /* Arbitrarily large enough to not be an issue. */
     fifo8_create(&s->ibi_data.ibi_intermediate_queue,
-                 s->cfg.ibi_queue_capacity_bytes * 8);
+                 s->cfg.ibi_queue_capacity_words * 8);
 
     s->bus = i3c_init_bus(DEVICE(s), name);
     I3CBusClass *bc = I3C_BUS_GET_CLASS(s->bus);
@@ -1824,14 +1830,35 @@ static void dw_i3c_realize(DeviceState *dev, Error **errp)
     bc->ibi_finish = dw_i3c_ibi_finish;
 }
 
+/*
+ * The *-queue-capacity-bytes properties shipped in v11.0.0 under names that
+ * implied a byte count, but the values are 32-bit word counts (they are passed
+ * straight to fifo32_create()).  They were renamed to *-queue-capacity-words;
+ * keep the old names working as aliases so existing command lines using e.g.
+ * -global driver=dw.i3c,property=tx-rx-queue-capacity-bytes,... don't break.
+ */
+static void dw_i3c_init(Object *obj)
+{
+    static const char *const alias[][2] = {
+        { "command-response-queue-capacity-bytes",
+          "command-response-queue-capacity-words" },
+        { "tx-rx-queue-capacity-bytes", "tx-rx-queue-capacity-words" },
+        { "ibi-queue-capacity-bytes", "ibi-queue-capacity-words" },
+    };
+
+    for (int i = 0; i < ARRAY_SIZE(alias); i++) {
+        object_property_add_alias(obj, alias[i][0], obj, alias[i][1]);
+    }
+}
+
 static const Property dw_i3c_properties[] = {
     DEFINE_PROP_UINT8("device-id", DWI3C, cfg.id, 0),
-    DEFINE_PROP_UINT8("command-response-queue-capacity-bytes", DWI3C,
-                      cfg.cmd_resp_queue_capacity_bytes, 0x10),
-    DEFINE_PROP_UINT16("tx-rx-queue-capacity-bytes", DWI3C,
-                      cfg.tx_rx_queue_capacity_bytes, 0x40),
-    DEFINE_PROP_UINT8("ibi-queue-capacity-bytes", DWI3C,
-                      cfg.ibi_queue_capacity_bytes, 0x10),
+    DEFINE_PROP_UINT8("command-response-queue-capacity-words", DWI3C,
+                      cfg.cmd_resp_queue_capacity_words, 0x10),
+    DEFINE_PROP_UINT16("tx-rx-queue-capacity-words", DWI3C,
+                      cfg.tx_rx_queue_capacity_words, 0x40),
+    DEFINE_PROP_UINT8("ibi-queue-capacity-words", DWI3C,
+                      cfg.ibi_queue_capacity_words, 0x10),
     DEFINE_PROP_UINT8("num-addressable-devices", DWI3C,
                       cfg.num_addressable_devices, 8),
     DEFINE_PROP_UINT16("dev-addr-table-pointer", DWI3C,
@@ -1862,6 +1889,7 @@ static const TypeInfo dw_i3c_types[] = {
         .name = TYPE_DW_I3C,
         .parent = TYPE_SYS_BUS_DEVICE,
         .instance_size = sizeof(DWI3C),
+        .instance_init = dw_i3c_init,
         .class_init = dw_i3c_class_init,
     },
 };

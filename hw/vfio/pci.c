@@ -38,6 +38,7 @@
 #include "qemu/module.h"
 #include "qemu/range.h"
 #include "qemu/units.h"
+#include "system/accel-irq.h"
 #include "system/kvm.h"
 #include "system/runstate.h"
 #include "pci.h"
@@ -50,7 +51,7 @@
 #include "vfio-helpers.h"
 
 /* Protected by BQL */
-static KVMRouteChange vfio_route_change;
+static AccelRouteChange vfio_route_change;
 
 static void vfio_disable_interrupts(VFIOPCIDevice *vdev);
 static void vfio_mmap_set_enabled(VFIOPCIDevice *vdev, bool enabled);
@@ -464,7 +465,12 @@ static void vfio_msi_interrupt(void *opaque)
         get_msg = msi_get_message;
         notify = msi_notify;
     } else {
-        abort();
+        /*
+         * Interrupt state transitions (MSI/MSI-X -> NONE/INTx) are
+         * protected by the BQL, and eventfd handlers are strictly
+         * unregistered before vdev->interrupt is modified.
+         */
+        g_assert_not_reached();
     }
 
     msg = get_msg(pdev, nr);
@@ -696,9 +702,9 @@ static int vfio_msix_vector_do_use(PCIDevice *pdev, unsigned int nr,
             if (vdev->defer_kvm_irq_routing) {
                 vfio_pci_add_kvm_msi_virq(vdev, vector, nr, true);
             } else {
-                vfio_route_change = kvm_irqchip_begin_route_changes(kvm_state);
+                vfio_route_change = accel_irqchip_begin_route_changes();
                 vfio_pci_add_kvm_msi_virq(vdev, vector, nr, true);
-                kvm_irqchip_commit_route_changes(&vfio_route_change);
+                accel_irqchip_commit_route_changes(&vfio_route_change);
                 vfio_connect_kvm_msi_virq(vector, nr);
             }
         }
@@ -797,7 +803,7 @@ void vfio_pci_prepare_kvm_msi_virq_batch(VFIOPCIDevice *vdev)
 {
     assert(!vdev->defer_kvm_irq_routing);
     vdev->defer_kvm_irq_routing = true;
-    vfio_route_change = kvm_irqchip_begin_route_changes(kvm_state);
+    vfio_route_change = accel_irqchip_begin_route_changes();
 }
 
 void vfio_pci_commit_kvm_msi_virq_batch(VFIOPCIDevice *vdev)
@@ -807,7 +813,7 @@ void vfio_pci_commit_kvm_msi_virq_batch(VFIOPCIDevice *vdev)
     assert(vdev->defer_kvm_irq_routing);
     vdev->defer_kvm_irq_routing = false;
 
-    kvm_irqchip_commit_route_changes(&vfio_route_change);
+    accel_irqchip_commit_route_changes(&vfio_route_change);
 
     for (i = 0; i < vdev->nr_vectors; i++) {
         vfio_connect_kvm_msi_virq(&vdev->msi_vectors[i], i);
@@ -1035,7 +1041,7 @@ static void vfio_update_msi(VFIOPCIDevice *vdev)
     }
 }
 
-static void vfio_pci_load_rom(VFIOPCIDevice *vdev)
+static bool vfio_pci_load_rom(VFIOPCIDevice *vdev, Error **errp)
 {
     VFIODevice *vbasedev = &vdev->vbasedev;
     struct vfio_region_info *reg_info = NULL;
@@ -1048,8 +1054,8 @@ static void vfio_pci_load_rom(VFIOPCIDevice *vdev)
                                       &reg_info);
 
     if (ret != 0) {
-        error_report("vfio: Error getting ROM info: %s", strerror(-ret));
-        return;
+        error_setg_errno(errp, -ret, "vfio: Error getting ROM info");
+        return false;
     }
 
     trace_vfio_pci_load_rom(vbasedev->name, (unsigned long)reg_info->size,
@@ -1060,12 +1066,14 @@ static void vfio_pci_load_rom(VFIOPCIDevice *vdev)
     vdev->rom_offset = reg_info->offset;
 
     if (!vdev->rom_size) {
-        vdev->rom_read_failed = true;
-        error_report("vfio-pci: Cannot read device rom at %s", vbasedev->name);
-        error_printf("Device option ROM contents are probably invalid "
-                    "(check dmesg).\nSkip option ROM probe with rombar=0, "
-                    "or load from file with romfile=\n");
-        return;
+        vdev->rom_size = 0;
+        vdev->rom_offset = 0;
+        error_setg(errp, "vfio-pci: Device ROM size is zero at %s",
+                   vbasedev->name);
+        error_append_hint(errp, "Device option ROM contents are probably "
+                          "invalid (check dmesg).\nSkip option ROM probe "
+                          "with rombar=0, or load from file with romfile=\n");
+        return false;
     }
 
     vdev->rom = g_malloc(size);
@@ -1085,10 +1093,12 @@ static void vfio_pci_load_rom(VFIOPCIDevice *vdev)
             if (bytes == -EINTR || bytes == -EAGAIN) {
                 continue;
             }
-            error_report("vfio: Error reading device ROM: %s",
-                         strreaderror(bytes));
-
-            break;
+            error_setg_errno(errp, -bytes, "vfio: Error reading device ROM");
+            g_free(vdev->rom);
+            vdev->rom = NULL;
+            vdev->rom_size = 0;
+            vdev->rom_offset = 0;
+            return false;
         }
     }
 
@@ -1121,6 +1131,8 @@ static void vfio_pci_load_rom(VFIOPCIDevice *vdev)
             data[6] = -csum;
         }
     }
+
+    return true;
 }
 
 /* "Raw" read of underlying config space. */
@@ -1149,12 +1161,17 @@ static uint64_t vfio_rom_read(void *opaque, hwaddr addr, unsigned size)
         uint16_t word;
         uint32_t dword;
         uint64_t qword;
-    } val;
+    } val = { .qword = ~0ULL };
     uint64_t data = 0;
 
     /* Load the ROM lazily when the guest tries to read it */
     if (unlikely(!vdev->rom && !vdev->rom_read_failed)) {
-        vfio_pci_load_rom(vdev);
+        Error *local_err = NULL;
+
+        vdev->rom_read_failed = !vfio_pci_load_rom(vdev, &local_err);
+        if (vdev->rom_read_failed) {
+            error_report_err(local_err);
+        }
     }
 
     memcpy(&val, vdev->rom + addr,
@@ -1786,6 +1803,14 @@ static bool vfio_msix_early_setup(VFIOPCIDevice *vdev, Error **errp)
     msix->pba_bar = pba & PCI_MSIX_FLAGS_BIRMASK;
     msix->pba_offset = pba & ~PCI_MSIX_FLAGS_BIRMASK;
     msix->entries = (ctrl & PCI_MSIX_FLAGS_QSIZE) + 1;
+
+    if (msix->table_bar >= ARRAY_SIZE(vdev->bars) ||
+        msix->pba_bar >= ARRAY_SIZE(vdev->bars)) {
+        error_setg(errp, "invalid MSI-X BIR, table_bar=%d pba_bar=%d",
+                   msix->table_bar, msix->pba_bar);
+        g_free(msix);
+        return false;
+    }
 
     ret = vfio_device_get_irq_info(&vdev->vbasedev, VFIO_PCI_MSIX_IRQ_INDEX,
                                    &irq_info);
@@ -2554,10 +2579,53 @@ static bool vfio_pci_synthesize_pasid_cap(VFIOPCIDevice *vdev, Error **errp)
     return true;
 }
 
-static void vfio_add_ext_cap(VFIOPCIDevice *vdev)
+/*
+ * Determine whether ATS capability should be advertised for @vdev, based on
+ * whether it was enabled on the command line and whether it is supported
+ * according to the kernel.
+ *
+ * Store whether ATS capability should be advertised in @ats_needed.
+ *
+ * Returns false only when ats=on is explicitly requested but the kernel
+ * reports it is not supported. Returns true in all other cases.
+ */
+static bool vfio_pci_ats_requested_and_supported(VFIOPCIDevice *vdev,
+                                                 bool *ats_needed, Error **errp)
+{
+    HostIOMMUDevice *hiod = vdev->vbasedev.hiod;
+    HostIOMMUDeviceClass *hiodc;
+    bool ats_supported;
+    *ats_needed = false;
+
+    if (vdev->ats == ON_OFF_AUTO_OFF) {
+        return true;
+    }
+
+    *ats_needed = true;
+    if (!hiod) {
+        return true;
+    }
+    hiodc = HOST_IOMMU_DEVICE_GET_CLASS(hiod);
+    if (!hiodc || !hiodc->support_ats) {
+        return true;
+    }
+
+    ats_supported = hiodc->support_ats(hiod);
+    if (vdev->ats == ON_OFF_AUTO_ON && !ats_supported) {
+        error_setg(errp, "vfio-pci: ATS requested but not supported by kernel");
+        *ats_needed = false;
+        return false;
+    }
+
+    *ats_needed = ats_supported;
+    return true;
+}
+
+static void vfio_add_ext_cap(VFIOPCIDevice *vdev, bool ats_needed)
 {
     PCIDevice *pdev = PCI_DEVICE(vdev);
     bool pasid_cap_added = false;
+    bool ats_cap_present = false;
     Error *err = NULL;
     uint32_t header;
     uint16_t cap_id, next, size;
@@ -2643,7 +2711,19 @@ static void vfio_add_ext_cap(VFIOPCIDevice *vdev)
          */
         case PCI_EXT_CAP_ID_PASID:
             pasid_cap_added = true;
-            /* fallthrough */
+            pcie_add_capability(pdev, cap_id, cap_ver, next, size);
+            break;
+        case PCI_EXT_CAP_ID_ATS:
+            ats_cap_present = true;
+            /*
+             * If ATS is requested and supported according to the kernel, add
+             * the ATS capability. If not supported according to the kernel or
+             * disabled on the qemu command line, omit the ATS cap.
+             */
+            if (ats_needed) {
+                pcie_add_capability(pdev, cap_id, cap_ver, next, size);
+            }
+            break;
         default:
             pcie_add_capability(pdev, cap_id, cap_ver, next, size);
         }
@@ -2652,6 +2732,16 @@ static void vfio_add_ext_cap(VFIOPCIDevice *vdev)
 
     if (!pasid_cap_added && !vfio_pci_synthesize_pasid_cap(vdev, &err)) {
         error_report_err(err);
+    }
+
+    if (vdev->ats == ON_OFF_AUTO_ON && !ats_cap_present) {
+        warn_report("vfio-pci: ats=on requested, but host device has no "
+                    "ATS extended capability");
+    }
+
+    if (vdev->ats == ON_OFF_AUTO_AUTO && ats_cap_present && !ats_needed) {
+        warn_report("vfio-pci: host kernel reports ATS unsupported; "
+                    "ATS capability will be masked");
     }
 
     /* Cleanup chain head ID if necessary */
@@ -2665,6 +2755,7 @@ static void vfio_add_ext_cap(VFIOPCIDevice *vdev)
 bool vfio_pci_add_capabilities(VFIOPCIDevice *vdev, Error **errp)
 {
     PCIDevice *pdev = PCI_DEVICE(vdev);
+    bool ats_needed = false;
 
     if (!(pdev->config[PCI_STATUS] & PCI_STATUS_CAP_LIST) ||
         !pdev->config[PCI_CAPABILITY_LIST]) {
@@ -2675,7 +2766,11 @@ bool vfio_pci_add_capabilities(VFIOPCIDevice *vdev, Error **errp)
         return false;
     }
 
-    vfio_add_ext_cap(vdev);
+    if (!vfio_pci_ats_requested_and_supported(vdev, &ats_needed, errp)) {
+        return false;
+    }
+
+    vfio_add_ext_cap(vdev, ats_needed);
     return true;
 }
 
@@ -3605,6 +3700,7 @@ static void vfio_pci_realize(PCIDevice *pdev, Error **errp)
     return;
 
 out_deregister:
+    vfio_display_exit(vdev);
     if (vdev->interrupt == VFIO_INT_INTx) {
         vfio_intx_disable(vdev);
     }
@@ -3638,6 +3734,7 @@ static void vfio_exitfn(PCIDevice *pdev)
     VFIOPCIDevice *vdev = VFIO_PCI_DEVICE(pdev);
     VFIODevice *vbasedev = &vdev->vbasedev;
 
+    vfio_display_exit(vdev);
     vfio_unregister_req_notifier(vdev);
     vfio_unregister_err_notifier(vdev);
     pci_device_set_intx_routing_notifier(pdev, NULL);
@@ -3831,6 +3928,7 @@ static const Property vfio_pci_properties[] = {
     DEFINE_PROP_BOOL("skip-vsc-check", VFIOPCIDevice, skip_vsc_check, true),
     DEFINE_PROP_UINT16("x-vpasid-cap-offset", VFIOPCIDevice,
                        vpasid_cap_offset, 0),
+    DEFINE_PROP_ON_OFF_AUTO("ats", VFIOPCIDevice, ats, ON_OFF_AUTO_AUTO),
 };
 
 static void vfio_pci_set_fd(Object *obj, const char *str, Error **errp)
@@ -3985,13 +4083,22 @@ static void vfio_pci_class_init(ObjectClass *klass, const void *data)
                                           "destination when doing live "
                                           "migration of device state via "
                                           "multifd channels");
-   object_class_property_set_description(klass, /* 11.0 */
+    object_class_property_set_description(klass, /* 11.0 */
                                           "x-vpasid-cap-offset",
                                           "PCIe extended configuration space offset at which to place a "
                                           "synthetic PASID extended capability when PASID is enabled via "
                                           "a vIOMMU. A value of 0 (default) places the capability at the "
                                           "end of the extended configuration space. The offset must be "
                                           "4-byte aligned and within the PCIe extended configuration space");
+    object_class_property_set_description(klass, /* 11.1 */
+                                          "ats",
+                                          "Control guest visibility of the ATS PCIe extended capability. "
+                                          "Valid values are on, off, and auto (default). "
+                                          "'off' always masks ATS. "
+                                          "'on' requires ATS support for the device and fails realize if the "
+                                          "host kernel reports ATS as unavailable for this device. "
+                                          "'auto' masks ATS only when the host kernel reports "
+                                          "ATS as unavailable");
 }
 
 static const TypeInfo vfio_pci_info = {

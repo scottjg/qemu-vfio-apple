@@ -4,22 +4,10 @@ sphinx_build = find_program(fs.parent(python.full_path()) / 'sphinx-build',
 # Check if tools are available to build documentation.
 build_docs = false
 if sphinx_build.found()
-  SPHINX_ARGS = ['env', 'CONFDIR=' + qemu_confdir, sphinx_build, '-q']
+  SPHINX_ARGS = ['env', 'CONFDIR=' + qemu_confdir, sphinx_build, '-q', '-j', 'auto']
   # If we're making warnings fatal, apply this to Sphinx runs as well
   if get_option('werror')
     SPHINX_ARGS += [ '-W', '-Dkerneldoc_werror=1' ]
-  endif
-
-  sphinx_version = run_command(SPHINX_ARGS + ['--version'],
-                               check: true).stdout().split()[1]
-  if sphinx_version.version_compare('>=1.7.0')
-    SPHINX_ARGS += ['-j', 'auto']
-  else
-    nproc = find_program('nproc')
-    if nproc.found()
-      jobs = run_command(nproc, check: true).stdout()
-      SPHINX_ARGS += ['-j', jobs]
-    endif
   endif
 
   # This is a bit awkward but works: create a trivial document and
@@ -54,6 +42,7 @@ if build_docs
         'qemu-pr-helper.8': (have_tools ? 'man8' : ''),
         'qemu-storage-daemon.1': (have_tools ? 'man1' : ''),
         'qemu-trace-stap.1': (stap.found() ? 'man1' : ''),
+        'qemu-vnc.1': (have_qemu_vnc ? 'man1' : ''),
         'qemu.1': 'man1',
         'qemu-block-drivers.7': 'man7',
         'qemu-cpu-models.7': 'man7'

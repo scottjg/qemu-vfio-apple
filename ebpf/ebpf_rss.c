@@ -270,7 +270,7 @@ bool ebpf_rss_set_all(struct EBPFRSSContext *ctx, struct EBPFRSSConfig *config,
 
     ebpf_rss_set_toepliz_key(ctx, toeplitz_key);
 
-    trace_ebpf_rss_set_data(ctx, config, indirections_table, toeplitz_key);
+    trace_ebpf_rss_set_data(ctx, config, toeplitz_key, indirections_table);
 
     return true;
 }

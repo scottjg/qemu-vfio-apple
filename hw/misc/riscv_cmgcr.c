@@ -19,6 +19,7 @@
 #include "migration/vmstate.h"
 #include "hw/misc/riscv_cmgcr.h"
 #include "hw/core/qdev-properties.h"
+#include "exec/target_page.h"
 
 #include "target/riscv/cpu.h"
 

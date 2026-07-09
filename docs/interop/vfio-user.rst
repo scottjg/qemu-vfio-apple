@@ -604,27 +604,31 @@ Request
 
 The request payload for this message is a structure of the following format:
 
-+-------------+--------+-------------+
-| Name        | Offset | Size        |
-+=============+========+=============+
-| argsz       | 0      | 4           |
-+-------------+--------+-------------+
-| flags       | 4      | 4           |
-+-------------+--------+-------------+
-|             | +-----+------------+ |
-|             | | Bit | Definition | |
-|             | +=====+============+ |
-|             | | 0   | readable   | |
-|             | +-----+------------+ |
-|             | | 1   | writeable  | |
-|             | +-----+------------+ |
-+-------------+--------+-------------+
-| offset      | 8      | 8           |
-+-------------+--------+-------------+
-| address     | 16     | 8           |
-+-------------+--------+-------------+
-| size        | 24     | 8           |
-+-------------+--------+-------------+
++-------------+--------+------------------------+
+| Name        | Offset | Size                   |
++=============+========+========================+
+| argsz       | 0      | 4                      |
++-------------+--------+------------------------+
+| flags       | 4      | 4                      |
++-------------+--------+------------------------+
+|             | +-----+-----------------------+ |
+|             | | Bit | Definition            | |
+|             | +=====+=======================+ |
+|             | | 0   | readable              | |
+|             | +-----+-----------------------+ |
+|             | | 1   | writeable             | |
+|             | +-----+-----------------------+ |
+|             | | 2   | access mode: mmap     | |
+|             | +-----+-----------------------+ |
+|             | | 3   | access mode: file I/O | |
+|             | +-----+-----------------------+ |
++-------------+--------+------------------------+
+| offset      | 8      | 8                      |
++-------------+--------+------------------------+
+| address     | 16     | 8                      |
++-------------+--------+------------------------+
+| size        | 24     | 8                      |
++-------------+--------+------------------------+
 
 * *argsz* is the size of the above structure. Note there is no reply payload,
   so this field differs from other message types.
@@ -634,6 +638,8 @@ The request payload for this message is a structure of the following format:
 
   * *writeable* indicates that the region can be written to.
 
+  * *access mode* bits indicate how the region is to be accessed by the server.
+
 * *offset* is the file offset of the region with respect to the associated file
   descriptor, or zero if the region is not mappable
 * *address* is the base DMA address of the region.
@@ -641,16 +647,30 @@ The request payload for this message is a structure of the following format:
 
 This structure is 32 bytes in size, so the message size is 16 + 32 bytes.
 
-If the DMA region being added can be directly mapped by the server, a file
-descriptor must be sent as part of the message meta-data. The region can be
-mapped via the mmap() system call. On ``AF_UNIX`` sockets, the file descriptor
-must be passed as ``SCM_RIGHTS`` type ancillary data.  Otherwise, if the DMA
-region cannot be directly mapped by the server, no file descriptor must be sent
-as part of the message meta-data and the DMA region can be accessed by the
-server using ``VFIO_USER_DMA_READ`` and ``VFIO_USER_DMA_WRITE`` messages,
-explained in `Read and Write Operations`_. A command to map over an existing
-region must be failed by the server with ``EEXIST`` set in error field in the
-reply.
+There are several alternative access modes for the server to use when accessing
+the region:
+
+* ``VFIO_USER_DMA_READ`` and ``VFIO_USER_DMA_WRITE`` messages, explained in
+  `Read and Write Operations`_.
+
+* ``mmap()`` a client-provided file descriptor, then perform direct accesses to
+  the underlying memory.
+
+* File I/O system calls (such as ``pread()`` / ``pwrite()``) against a
+  client-provided file descriptor.
+
+The access mode bits in the flags field indicate which access mode to use. If
+an access mode requiring a file descriptor is specified, but the client does
+not provide a file descriptor, the server must fail the request with
+``EINVAL``. If no access mode flag bit is set, the server should use ``mmap()``
+based access if the client provided a file descriptor and message-based access
+otherwise.
+
+On ``AF_UNIX`` sockets, the file descriptor must be passed as ``SCM_RIGHTS``
+type ancillary data.
+
+A command to map over an existing region must be failed by the server with
+``EEXIST`` set in the error field in the reply.
 
 Reply
 ^^^^^

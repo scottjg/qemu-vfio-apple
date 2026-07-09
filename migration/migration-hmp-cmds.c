@@ -17,7 +17,9 @@
 #include "block/qapi.h"
 #include "migration/snapshot.h"
 #include "monitor/hmp.h"
+#include "monitor/hmp-completion.h"
 #include "monitor/monitor.h"
+#include "monitor/monitor-internal.h"
 #include "qapi/error.h"
 #include "qapi/qapi-commands-migration.h"
 #include "qapi/qapi-visit-migration.h"
@@ -176,6 +178,11 @@ void hmp_info_migrate(Monitor *mon, const QDict *qdict)
             }
             monitor_printf(mon, "\n");
         }
+    }
+
+    if (info->has_remaining) {
+        g_autofree char *remaining = size_to_str(info->remaining);
+        monitor_printf(mon, "Remaining: \t\t%s\n", remaining);
     }
 
     if (info->has_socket_address) {
@@ -449,6 +456,13 @@ void hmp_info_migrate_parameters(Monitor *mon, const QDict *qdict)
                            MigrationParameter_str(
                                MIGRATION_PARAMETER_DIRECT_IO),
                            params->direct_io ? "on" : "off");
+        }
+
+        if (params->has_x_rdma_chunk_size) {
+            monitor_printf(mon, "%s: %" PRIu64 " bytes\n",
+                           MigrationParameter_str(
+                               MIGRATION_PARAMETER_X_RDMA_CHUNK_SIZE),
+                           params->x_rdma_chunk_size);
         }
 
         assert(params->has_cpr_exec_command);
@@ -734,6 +748,10 @@ void hmp_migrate_set_parameter(Monitor *mon, const QDict *qdict)
         p->has_direct_io = true;
         visit_type_bool(v, param, &p->direct_io, &err);
         break;
+    case MIGRATION_PARAMETER_X_RDMA_CHUNK_SIZE:
+        p->has_x_rdma_chunk_size = true;
+        visit_type_size(v, param, &p->x_rdma_chunk_size, &err);
+        break;
     case MIGRATION_PARAMETER_CPR_EXEC_COMMAND: {
         /*
          * NOTE: g_autofree will only auto g_free() the strv array when
@@ -836,12 +854,14 @@ void hmp_migrate(Monitor *mon, const QDict *qdict)
 
     if (!detach) {
         HMPMigrationStatus *status;
+        MonitorHMP *hmp = MONITOR_HMP(mon);
 
-        if (monitor_suspend(mon) < 0) {
+        if (!hmp->use_readline) {
             monitor_printf(mon, "terminal does not allow synchronous "
                            "migration, continuing detached\n");
             return;
         }
+        monitor_suspend(mon);
 
         status = g_malloc0(sizeof(*status));
         status->mon = mon;

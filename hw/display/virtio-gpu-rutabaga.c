@@ -282,7 +282,7 @@ rutabaga_cmd_resource_flush(VirtIOGPU *g, struct virtio_gpu_ctrl_command *cmd)
                                              rf.resource_id, &transfer,
                                              &transfer_iovec);
     CHECK(!result, cmd);
-    dpy_gfx_update_full(scanout->con);
+    qemu_console_update_full(scanout->con);
 }
 
 static void
@@ -306,8 +306,8 @@ rutabaga_cmd_set_scanout(VirtIOGPU *g, struct virtio_gpu_ctrl_command *cmd)
     scanout = &vb->scanout[ss.scanout_id];
 
     if (ss.resource_id == 0) {
-        dpy_gfx_replace_surface(scanout->con, NULL);
-        dpy_gl_scanout_disable(scanout->con);
+        qemu_console_set_surface(scanout->con, NULL);
+        qemu_console_gl_scanout_disable(scanout->con);
         return;
     }
 
@@ -331,8 +331,8 @@ rutabaga_cmd_set_scanout(VirtIOGPU *g, struct virtio_gpu_ctrl_command *cmd)
 
     /* realloc the surface ptr */
     scanout->ds = qemu_create_displaysurface_pixman(res->image);
-    dpy_gfx_replace_surface(scanout->con, NULL);
-    dpy_gfx_replace_surface(scanout->con, scanout->ds);
+    qemu_console_set_surface(scanout->con, NULL);
+    qemu_console_set_surface(scanout->con, scanout->ds);
     res->scanout_bitmask = ss.scanout_id;
 }
 

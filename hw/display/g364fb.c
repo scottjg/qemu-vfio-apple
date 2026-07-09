@@ -191,8 +191,8 @@ static void g364fb_draw_graphic8(G364State *s)
         } else {
             int dy;
             if (xmax || ymax) {
-                dpy_gfx_update(s->con, xmin, ymin,
-                               xmax - xmin + 1, ymax - ymin + 1);
+                qemu_console_update(s->con, xmin, ymin,
+                                   xmax - xmin + 1, ymax - ymin + 1);
                 xmin = s->width;
                 xmax = 0;
                 ymin = s->height;
@@ -211,7 +211,7 @@ static void g364fb_draw_graphic8(G364State *s)
 
 done:
     if (xmax || ymax) {
-        dpy_gfx_update(s->con, xmin, ymin, xmax - xmin + 1, ymax - ymin + 1);
+        qemu_console_update(s->con, xmin, ymin, xmax - xmin + 1, ymax - ymin + 1);
     }
     g_free(snap);
 }
@@ -234,7 +234,7 @@ static void g364fb_draw_blank(G364State *s)
         d += surface_stride(surface);
     }
 
-    dpy_gfx_update_full(s->con);
+    qemu_console_update_full(s->con);
     s->blanked = 1;
 }
 
@@ -478,7 +478,7 @@ static const GraphicHwOps g364fb_ops = {
 
 static void g364fb_init(DeviceState *dev, G364State *s)
 {
-    s->con = graphic_console_init(dev, 0, &g364fb_ops, s);
+    s->con = qemu_graphic_console_create(dev, 0, &g364fb_ops, s);
 
     memory_region_init_io(&s->mem_ctrl, OBJECT(dev), &g364fb_ctrl_ops, s,
                           "ctrl", 0x180000);

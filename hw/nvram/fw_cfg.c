@@ -1019,20 +1019,17 @@ static void fw_cfg_common_realize(DeviceState *dev, Error **errp)
     qemu_add_machine_init_done_notifier(&s->machine_ready);
 }
 
-FWCfgState *fw_cfg_init_io_dma(uint32_t iobase, uint32_t dma_iobase,
-                                AddressSpace *dma_as)
+FWCfgState *fw_cfg_init_io_dma(uint32_t iobase, AddressSpace *dma_as)
 {
     DeviceState *dev;
     SysBusDevice *sbd;
     FWCfgIoState *ios;
     FWCfgState *s;
     MemoryRegion *iomem = get_system_io();
-    bool dma_requested = dma_iobase && dma_as;
+
+    assert(dma_as);
 
     dev = qdev_new(TYPE_FW_CFG_IO);
-    if (!dma_requested) {
-        qdev_prop_set_bit(dev, "dma_enabled", false);
-    }
 
     object_property_add_child(OBJECT(qdev_get_machine()), TYPE_FW_CFG,
                               OBJECT(dev));
@@ -1048,7 +1045,8 @@ FWCfgState *fw_cfg_init_io_dma(uint32_t iobase, uint32_t dma_iobase,
         /* 64 bits for the address field */
         s->dma_as = dma_as;
         s->dma_addr = 0;
-        memory_region_add_subregion(iomem, dma_iobase, &s->dma_iomem);
+        /* DMA register ioport is always at base + 4 */
+        memory_region_add_subregion(iomem, iobase + 4, &s->dma_iomem);
     }
 
     return s;
@@ -1088,13 +1086,11 @@ static FWCfgState *fw_cfg_init_mem_internal(hwaddr ctl_addr,
     return s;
 }
 
-FWCfgState *fw_cfg_init_mem_dma(hwaddr ctl_addr,
-                                hwaddr data_addr, uint32_t data_width,
-                                hwaddr dma_addr, AddressSpace *dma_as)
+FWCfgState *fw_cfg_init_mem_dma(hwaddr base_addr, AddressSpace *dma_as)
 {
-    assert(dma_addr && dma_as);
-    return fw_cfg_init_mem_internal(ctl_addr, data_addr, data_width,
-                                    dma_addr, dma_as);
+    assert(dma_as);
+    return fw_cfg_init_mem_internal(base_addr + 8, base_addr, 8,
+                                    base_addr + 16, dma_as);
 }
 
 FWCfgState *fw_cfg_init_mem_nodma(hwaddr ctl_addr, hwaddr data_addr,
@@ -1141,6 +1137,28 @@ void load_image_to_fw_cfg(FWCfgState *fw_cfg, uint16_t size_key,
 
     fw_cfg_add_i32(fw_cfg, size_key, size);
     fw_cfg_add_bytes(fw_cfg, data_key, data, size);
+}
+
+void load_image_to_fw_cfg_file(FWCfgState *fw_cfg,
+                               const char *fw_cfg_name,
+                               const char *image_name)
+{
+    GMappedFile *mapped_file;
+    GError *gerr = NULL;
+
+    if (image_name == NULL) {
+        return;
+    }
+
+    mapped_file = g_mapped_file_new(image_name, false, &gerr);
+    if (!mapped_file) {
+        error_report("qemu: error reading %s: %s",
+                     image_name, gerr->message);
+        exit(1);
+    }
+    fw_cfg_add_file(fw_cfg, fw_cfg_name,
+                    g_mapped_file_get_contents(mapped_file),
+                    g_mapped_file_get_length(mapped_file));
 }
 
 static void fw_cfg_class_init(ObjectClass *klass, const void *data)

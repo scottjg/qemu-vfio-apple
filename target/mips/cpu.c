@@ -25,9 +25,8 @@
 #include "qapi/error.h"
 #include "cpu.h"
 #include "internal.h"
-#include "kvm_mips.h"
 #include "qemu/module.h"
-#include "system/kvm.h"
+#include "qemu/qtree.h"
 #include "system/qtest.h"
 #include "hw/core/qdev-properties.h"
 #include "hw/core/qdev-clock.h"
@@ -183,6 +182,57 @@ static bool mips_cpu_has_work(CPUState *cs)
 
 #include "cpu-defs.c.inc"
 
+static gint mips_octeon_u64_tree_compare(gconstpointer a, gconstpointer b,
+                                         gpointer user_data)
+{
+    uint64_t av = *(const uint64_t *)a;
+    uint64_t bv = *(const uint64_t *)b;
+
+    return (av > bv) - (av < bv);
+}
+
+QTree *mips_octeon_llm_tree_new(void)
+{
+    return q_tree_new_full(mips_octeon_u64_tree_compare,
+                           NULL, g_free, g_free);
+}
+
+uint64_t mips_octeon_llm_load(QTree *tree, uint64_t addr)
+{
+    uint64_t key = addr;
+    uint64_t *value = tree ? q_tree_lookup(tree, &key) : NULL;
+
+    return value ? *value : 0;
+}
+
+void mips_octeon_llm_store(QTree **treep, uint64_t addr, uint64_t value)
+{
+    uint64_t *key;
+    uint64_t *stored;
+
+    if (!*treep) {
+        *treep = mips_octeon_llm_tree_new();
+    }
+
+    key = g_new(uint64_t, 1);
+    stored = g_new(uint64_t, 1);
+    *key = addr;
+    *stored = value;
+    q_tree_replace(*treep, key, stored);
+}
+
+static void mips_octeon_destroy_llm_state(MIPSOcteonCryptoState *crypto)
+{
+    if (crypto->llm36) {
+        q_tree_destroy(crypto->llm36);
+        crypto->llm36 = NULL;
+    }
+    if (crypto->llm64) {
+        q_tree_destroy(crypto->llm64);
+        crypto->llm64 = NULL;
+    }
+}
+
 static void mips_cpu_reset_hold(Object *obj, ResetType type)
 {
     CPUState *cs = CPU(obj);
@@ -194,6 +244,7 @@ static void mips_cpu_reset_hold(Object *obj, ResetType type)
         mcc->parent_phases.hold(obj, type);
     }
 
+    mips_octeon_destroy_llm_state(&env->octeon_crypto);
     memset(env, 0, offsetof(CPUMIPSState, end_reset_fields));
 
     /* Reset registers to their default values */
@@ -248,6 +299,9 @@ static void mips_cpu_reset_hold(Object *obj, ResetType type)
     env->active_fpu.fcr31 = env->cpu_model->CP1_fcr31;
     env->msair = env->cpu_model->MSAIR;
     env->insn_flags = env->cpu_model->insn_flags;
+    if (env->insn_flags & INSN_OCTEON) {
+        env->octeon_crypto.chord = 1;
+    }
 
 #if defined(CONFIG_USER_ONLY)
     env->CP0_Status = (MIPS_HFLAG_UM << CP0St_KSU);
@@ -264,6 +318,10 @@ static void mips_cpu_reset_hold(Object *obj, ResetType type)
      * hardware registers.
      */
     env->CP0_HWREna |= 0x0000000F;
+    if (env->insn_flags & INSN_OCTEON) {
+        env->CP0_HWREna |= 0x40000000u;
+        env->CP0_HWREna |= 0x80000000u;
+    }
     if (env->CP0_Config1 & (1 << CP0C1_FP)) {
         env->CP0_Status |= (1 << CP0St_CU1);
     }
@@ -339,7 +397,7 @@ static void mips_cpu_reset_hold(Object *obj, ResetType type)
 
         if (cs->cpu_index == 0) {
             /* VPE0 starts up enabled.  */
-            env->mvp->CP0_MVPControl |= (1 << CP0MVPCo_EVP);
+            cpu->mvp->CP0_MVPControl |= (1 << CP0MVPCo_EVP);
             env->CP0_VPEConf0 |= (1 << CP0VPEC0_MVP) | (1 << CP0VPEC0_VPA);
 
             /* TC0 starts up unhalted.  */
@@ -416,10 +474,14 @@ static void mips_cpu_reset_hold(Object *obj, ResetType type)
         /* UHI interface can be used to obtain argc and argv */
         env->active_tc.gpr[4] = -1;
     }
-    if (kvm_enabled()) {
-        kvm_mips_reset_vcpu(cpu);
-    }
 #endif
+}
+
+static void mips_cpu_finalize(Object *obj)
+{
+    MIPSCPU *cpu = MIPS_CPU(obj);
+
+    mips_octeon_destroy_llm_state(&cpu->env.octeon_crypto);
 }
 
 static void mips_cpu_disas_set_info(const CPUState *cs, disassemble_info *info)
@@ -449,7 +511,7 @@ static void mips_cp0_period_set(MIPSCPU *cpu)
 
     clock_set_mul_div(cpu->count_div, env->cpu_model->CCRes, 1);
     clock_set_source(cpu->count_div, cpu->clock);
-    clock_set_source(env->count_clock, cpu->count_div);
+    clock_set_source(cpu->count_clock, cpu->count_div);
 }
 
 static void mips_cpu_realizefn(DeviceState *dev, Error **errp)
@@ -502,6 +564,16 @@ static void mips_cpu_realizefn(DeviceState *dev, Error **errp)
     mcc->parent_realize(dev, errp);
 }
 
+static void mips_cpu_unrealizefn(DeviceState *dev)
+{
+    MIPSCPU *cpu = MIPS_CPU(dev);
+    MIPSCPUClass *mcc = MIPS_CPU_GET_CLASS(dev);
+
+    g_free(cpu->mvp);
+
+    mcc->parent_unrealize(dev);
+}
+
 static void mips_cpu_initfn(Object *obj)
 {
     MIPSCPU *cpu = MIPS_CPU(obj);
@@ -510,7 +582,7 @@ static void mips_cpu_initfn(Object *obj)
 
     cpu->clock = qdev_init_clock_in(DEVICE(obj), "clk-in", NULL, cpu, 0);
     cpu->count_div = clock_new(OBJECT(obj), "clk-div-count");
-    env->count_clock = clock_new(OBJECT(obj), "clk-count");
+    cpu->count_clock = clock_new(OBJECT(obj), "clk-count");
     env->cpu_model = mcc->cpu_def;
 }
 
@@ -535,7 +607,7 @@ static ObjectClass *mips_cpu_class_by_name(const char *cpu_model)
 
 static const struct SysemuCPUOps mips_sysemu_ops = {
     .has_work = mips_cpu_has_work,
-    .get_phys_page_debug = mips_cpu_get_phys_page_debug,
+    .get_phys_addr_debug = mips_cpu_get_phys_addr_debug,
     .legacy_vmsd = &vmstate_mips_cpu,
 };
 #endif
@@ -555,11 +627,17 @@ static int mips_cpu_mmu_index(CPUState *cs, bool ifunc)
 static TCGTBCPUState mips_get_tb_cpu_state(CPUState *cs)
 {
     CPUMIPSState *env = cpu_env(cs);
+    uint32_t flags = env->hflags & MIPS_HFLAG_TB_MASK;
+
+#ifdef CONFIG_USER_ONLY
+    if (!cs->prctl_unalign_sigbus) {
+        flags |= TB_FLAG_MIPS_FIXADE;
+    }
+#endif
 
     return (TCGTBCPUState){
         .pc = env->active_tc.PC,
-        .flags = env->hflags & (MIPS_HFLAG_TMASK | MIPS_HFLAG_BMASK |
-                                MIPS_HFLAG_HWRENA_ULR),
+        .flags = flags,
     };
 }
 
@@ -606,6 +684,8 @@ static void mips_cpu_class_init(ObjectClass *c, const void *data)
     device_class_set_props(dc, mips_cpu_properties);
     device_class_set_parent_realize(dc, mips_cpu_realizefn,
                                     &mcc->parent_realize);
+    device_class_set_parent_unrealize(dc, mips_cpu_unrealizefn,
+                                      &mcc->parent_unrealize);
     resettable_class_set_parent_phases(rc, NULL, mips_cpu_reset_hold, NULL,
                                        &mcc->parent_phases);
 
@@ -632,6 +712,7 @@ static const TypeInfo mips_cpu_type_info = {
     .instance_size = sizeof(MIPSCPU),
     .instance_align = __alignof(MIPSCPU),
     .instance_init = mips_cpu_initfn,
+    .instance_finalize = mips_cpu_finalize,
     .abstract = true,
     .class_size = sizeof(MIPSCPUClass),
     .class_init = mips_cpu_class_init,

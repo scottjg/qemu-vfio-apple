@@ -2371,19 +2371,36 @@ static void tcg_out_vec_op(TCGContext *s, TCGOpcode opc,
                 default:
                     g_assert_not_reached();
                 }
-                break;
-            }
-
-            insn = cmp_vec_insn[cond][lasx][vece];
-            if (insn == 0) {
-                TCGArg t;
-                t = a1, a1 = a2, a2 = t;
-                cond = tcg_swap_cond(cond);
-                insn = cmp_vec_insn[cond][lasx][vece];
-                tcg_debug_assert(insn != 0);
+            } else {
+                switch (cond) {
+                case TCG_COND_EQ:
+                case TCG_COND_LE:
+                case TCG_COND_LEU:
+                case TCG_COND_LT:
+                case TCG_COND_LTU:
+                    insn = cmp_vec_insn[cond][lasx][vece];
+                    tcg_out32(s, encode_vdvjvk_insn(insn, a0, a1, a2));
+                    break;
+                case TCG_COND_GE:
+                case TCG_COND_GEU:
+                case TCG_COND_GT:
+                case TCG_COND_GTU:
+                    insn = cmp_vec_insn[tcg_swap_cond(cond)][lasx][vece];
+                    tcg_out32(s, encode_vdvjvk_insn(insn, a0, a2, a1));
+                    break;
+                case TCG_COND_NE:
+                    /* ne -> not(eq) */
+                    insn = cmp_vec_insn[TCG_COND_EQ][lasx][vece];
+                    tcg_out32(s, encode_vdvjvk_insn(insn, a0, a1, a2));
+                    insn = lasx ? OPC_XVNOR_V : OPC_VNOR_V;
+                    tcg_out32(s, encode_vdvjvk_insn(insn, a0, a0, a0));
+                    break;
+                default:
+                    g_assert_not_reached();
+                }
             }
         }
-        goto vdvjvk;
+        break;
     case INDEX_op_add_vec:
         tcg_out_addsub_vec(s, lasx, vece, a0, a1, a2, const_args[2], true);
         break;

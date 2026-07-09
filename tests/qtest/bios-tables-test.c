@@ -1416,6 +1416,26 @@ static void test_acpi_q35_tcg_numamem(void)
     free_test_data(&data);
 }
 
+static void test_acpi_q35_tcg_sp_mem(void)
+{
+    test_data data = {};
+
+    data.machine = MACHINE_Q35;
+    data.arch    = "x86",
+    data.variant = ".spmem";
+    test_acpi_one(" -m 128M,slots=4,maxmem=1G"
+                  " -object memory-backend-ram,id=ram0,size=128M"
+                  " -numa node,nodeid=0,memdev=ram0"
+                  " -numa node,nodeid=1"
+                  " -numa node,nodeid=2"
+                  " -object memory-backend-ram,id=spm0,size=128M"
+                  " -object memory-backend-ram,id=spm1,size=128M"
+                  " -device sp-mem,id=sp0,memdev=spm0,node=1"
+                  " -device sp-mem,id=sp1,memdev=spm1,node=2",
+                  &data);
+    free_test_data(&data);
+}
+
 static void test_acpi_q35_kvm_xapic(void)
 {
     test_data data = {};
@@ -2275,6 +2295,43 @@ static void test_acpi_aarch64_virt_tcg_msi_gicv2m(void)
     free_test_data(&data);
 }
 
+static void test_acpi_aarch64_virt_tcg_wdat(void)
+{
+    test_data data = {
+        .machine = "virt",
+        .arch = "aarch64",
+        .variant = ".wdat",
+        .tcg_only = true,
+        .uefi_fl1 = "pc-bios/edk2-aarch64-code.fd",
+        .uefi_fl2 = "pc-bios/edk2-arm-vars.fd",
+        .cd = "tests/data/uefi-boot-images/bios-tables-test.aarch64.iso.qcow2",
+        .ram_start = 0x40000000ULL,
+        .scan_len = 128ULL * MiB,
+    };
+
+    test_acpi_one("-cpu cortex-a57 "
+                  "-device sbsa-gwdt,wdat=on", &data);
+    free_test_data(&data);
+}
+
+static void test_acpi_aarch64_virt_tcg_gtdt_wd(void)
+{
+    test_data data = {
+        .machine = "virt",
+        .arch = "aarch64",
+        .variant = ".gwdt",
+        .tcg_only = true,
+        .uefi_fl1 = "pc-bios/edk2-aarch64-code.fd",
+        .uefi_fl2 = "pc-bios/edk2-arm-vars.fd",
+        .cd = "tests/data/uefi-boot-images/bios-tables-test.aarch64.iso.qcow2",
+        .ram_start = 0x40000000ULL,
+        .scan_len = 128ULL * MiB,
+    };
+
+    test_acpi_one("-cpu cortex-a57 -device sbsa-gwdt", &data);
+    free_test_data(&data);
+}
+
 static void test_acpi_q35_viot(void)
 {
     test_data data = {
@@ -2531,6 +2588,18 @@ static void test_acpi_isapc_smbios_legacy(void)
 
     test_smbios("-smbios file=tests/data/smbios/type11_blob.legacy "
                 "-smbios type=1,family=TEST", &data);
+    free_test_data(&data);
+}
+
+static void test_acpi_q35_wdat(void)
+{
+    test_data data = {
+        .machine = MACHINE_Q35,
+        .arch    = "x86",
+        .variant = ".wdat",
+    };
+
+    test_acpi_one("-machine wdat=on", &data);
     free_test_data(&data);
 }
 
@@ -2795,6 +2864,7 @@ int main(int argc, char *argv[])
             if (strcmp(arch, "i386")) {
                 qtest_add_func("acpi/q35/memhp", test_acpi_q35_tcg_memhp);
                 qtest_add_func("acpi/q35/dimmpxm", test_acpi_q35_tcg_dimm_pxm);
+                qtest_add_func("acpi/q35/sp-mem", test_acpi_q35_tcg_sp_mem);
                 qtest_add_func("acpi/q35/acpihmat",
                                test_acpi_q35_tcg_acpi_hmat);
                 qtest_add_func("acpi/q35/mmio64", test_acpi_q35_tcg_mmio64);
@@ -2828,6 +2898,7 @@ int main(int argc, char *argv[])
             qtest_add_func("acpi/q35/cxl", test_acpi_q35_cxl);
 #endif
             qtest_add_func("acpi/q35/slic", test_acpi_q35_slic);
+            qtest_add_func("acpi/q35/wdat", test_acpi_q35_wdat);
         }
         if (qtest_has_machine("microvm")) {
             qtest_add_func("acpi/microvm", test_acpi_microvm_tcg);
@@ -2880,6 +2951,10 @@ int main(int argc, char *argv[])
                 qtest_add_func("acpi/virt/smmuv3-dev",
                                test_acpi_aarch64_virt_smmuv3_dev);
             }
+            qtest_add_func("acpi/virt/acpi-watchdog",
+                           test_acpi_aarch64_virt_tcg_wdat);
+            qtest_add_func("acpi/virt/gwdt-watchdog",
+                           test_acpi_aarch64_virt_tcg_gtdt_wd);
         }
     } else if (strcmp(arch, "riscv64") == 0) {
         if (has_tcg && qtest_has_device("virtio-blk-pci")) {

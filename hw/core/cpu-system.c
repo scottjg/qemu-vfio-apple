@@ -22,6 +22,7 @@
 #include "qapi/error.h"
 #include "system/address-spaces.h"
 #include "exec/cputlb.h"
+#include "exec/target_page.h"
 #include "system/memory.h"
 #include "qemu/target-info.h"
 #include "hw/core/qdev.h"
@@ -55,29 +56,28 @@ bool cpu_get_memory_mapping(CPUState *cpu, MemoryMappingList *list,
     return false;
 }
 
-hwaddr cpu_get_phys_page_attrs_debug(CPUState *cpu, vaddr addr,
-                                     MemTxAttrs *attrs)
+bool cpu_translate_for_debug(CPUState *cpu, vaddr addr,
+                             TranslateForDebugResult *result)
 {
-    hwaddr paddr;
-
-    if (cpu->cc->sysemu_ops->get_phys_page_attrs_debug) {
-        paddr = cpu->cc->sysemu_ops->get_phys_page_attrs_debug(cpu, addr,
-                                                               attrs);
+    if (cpu->cc->sysemu_ops->translate_for_debug) {
+        return cpu->cc->sysemu_ops->translate_for_debug(cpu, addr, result);
     } else {
-        /* Fallback for CPUs which don't implement the _attrs_ hook */
-        *attrs = MEMTXATTRS_UNSPECIFIED;
-        paddr = cpu->cc->sysemu_ops->get_phys_page_debug(cpu, addr);
+        /* Fallbacks for CPUs which don't implement translate_for_debug */
+        result->physaddr = cpu->cc->sysemu_ops->get_phys_addr_debug(cpu, addr);
+        result->attrs = MEMTXATTRS_UNSPECIFIED;
+        if (result->physaddr == -1) {
+            return false;
+        }
+        /* Indicate that this is a debug access. */
+        result->attrs.debug = 1;
+        /*
+         * Assume memory access permissions are valid for the whole page.
+         * Targets where this isn't true should implement the
+         * translate_for_debug method.
+         */
+        result->lg_page_size = TARGET_PAGE_BITS;
+        return true;
     }
-    /* Indicate that this is a debug access. */
-    attrs->debug = 1;
-    return paddr;
-}
-
-hwaddr cpu_get_phys_page_debug(CPUState *cpu, vaddr addr)
-{
-    MemTxAttrs attrs = {};
-
-    return cpu_get_phys_page_attrs_debug(cpu, addr, &attrs);
 }
 
 int cpu_asidx_from_attrs(CPUState *cpu, MemTxAttrs attrs)

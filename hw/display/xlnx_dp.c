@@ -570,6 +570,12 @@ static void xlnx_dp_set_dpdma(const Object *obj, const char *name, Object *val,
                               Error **errp)
 {
     XlnxDPState *s = XLNX_DP(obj);
+
+    if (!s) {
+        error_setg(errp, "%s cannot be set to NULL", name);
+        return;
+    }
+
     if (s->console) {
         DisplaySurface *surface = qemu_console_surface(s->console);
         XlnxDPDMAState *dma = XLNX_DPDMA(val);
@@ -605,7 +611,7 @@ static void xlnx_dp_recreate_surface(XlnxDPState *s)
 
     if ((width != 0) && (height != 0)) {
         /*
-         * As dpy_gfx_replace_surface calls qemu_free_displaysurface on the
+         * As qemu_console_replace_surface calls qemu_free_displaysurface on the
          * surface we need to be careful and don't free the surface associated
          * to the console or double free will happen.
          */
@@ -631,10 +637,10 @@ static void xlnx_dp_recreate_surface(XlnxDPState *s)
                                                             height,
                                                             s->g_plane.format,
                                                             0, NULL);
-            dpy_gfx_replace_surface(s->console, s->bout_plane.surface);
+            qemu_console_set_surface(s->console, s->bout_plane.surface);
         } else {
             s->bout_plane.surface = NULL;
-            dpy_gfx_replace_surface(s->console, s->g_plane.surface);
+            qemu_console_set_surface(s->console, s->g_plane.surface);
         }
 
         xlnx_dpdma_set_host_data_location(s->dpdma, DP_GRAPHIC_DMA_CHANNEL,
@@ -1287,7 +1293,7 @@ static bool xlnx_dp_update_display(void *opaque)
     /*
      * XXX: We might want to update only what changed.
      */
-    dpy_gfx_update_full(s->console);
+    qemu_console_update_full(s->console);
 
     return true;
 }
@@ -1387,7 +1393,7 @@ static void xlnx_dp_realize(DeviceState *dev, Error **errp)
     qdev_realize(DEVICE(s->edid), BUS(aux_get_i2c_bus(s->aux_bus)),
                  &error_fatal);
 
-    s->console = graphic_console_init(dev, 0, &xlnx_dp_gfx_ops, s);
+    s->console = qemu_graphic_console_create(dev, 0, &xlnx_dp_gfx_ops, s);
     surface = qemu_console_surface(s->console);
     xlnx_dpdma_set_host_data_location(s->dpdma, DP_GRAPHIC_DMA_CHANNEL,
                                       surface_data(surface));

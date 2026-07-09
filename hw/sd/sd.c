@@ -205,6 +205,7 @@ struct SDState {
     QEMUTimer *ocr_power_timer;
     uint8_t dat_lines;
     bool cmd_line;
+    char *preset_auth_key;
 };
 
 static void sd_realize(DeviceState *dev, Error **errp);
@@ -1609,7 +1610,7 @@ static sd_rsp_type_t sd_cmd_optional(SDState *sd, SDRequest req)
     return sd_illegal;
 }
 
-/* Configure fields for following sd_generic_write_byte() calls */
+/* Configure fields for following sd_generic_write_data() calls */
 static sd_rsp_type_t sd_cmd_to_receivingdata(SDState *sd, SDRequest req,
                                              uint64_t start, size_t size)
 {
@@ -1624,7 +1625,7 @@ static sd_rsp_type_t sd_cmd_to_receivingdata(SDState *sd, SDRequest req,
     return sd_r1;
 }
 
-/* Configure fields for following sd_generic_read_byte() calls */
+/* Configure fields for following sd_generic_read_data() calls */
 static sd_rsp_type_t sd_cmd_to_sendingdata(SDState *sd, SDRequest req,
                                            uint64_t start,
                                            const void *data, size_t size)
@@ -2614,11 +2615,15 @@ send_response:
 }
 
 /* Return true if buffer is consumed. Configured by sd_cmd_to_receivingdata() */
-static bool sd_generic_write_byte(SDState *sd, uint8_t value)
+static bool sd_generic_write_data(SDState *sd, const void *buf, size_t *len)
 {
-    sd->data[sd->data_offset] = value;
+    size_t to_write = MIN(sd->data_size - sd->data_offset, *len);
 
-    if (++sd->data_offset >= sd->data_size) {
+    memcpy(&sd->data[sd->data_offset], buf, to_write);
+    sd->data_offset += to_write;
+    *len = to_write;
+
+    if (sd->data_offset >= sd->data_size) {
         sd->state = sd_transfer_state;
         return true;
     }
@@ -2626,11 +2631,15 @@ static bool sd_generic_write_byte(SDState *sd, uint8_t value)
 }
 
 /* Return true when buffer is consumed. Configured by sd_cmd_to_sendingdata() */
-static bool sd_generic_read_byte(SDState *sd, uint8_t *value)
+static bool sd_generic_read_data(SDState *sd, void *buf, size_t *len)
 {
-    *value = sd->data[sd->data_offset];
+    size_t to_read = MIN(sd->data_size - sd->data_offset, *len);
 
-    if (++sd->data_offset >= sd->data_size) {
+    memcpy(buf, &sd->data[sd->data_offset], to_read);
+    sd->data_offset += to_read;
+    *len = to_read;
+
+    if (sd->data_offset >= sd->data_size) {
         sd->state = sd_transfer_state;
         return true;
     }
@@ -2638,30 +2647,43 @@ static bool sd_generic_read_byte(SDState *sd, uint8_t *value)
     return false;
 }
 
-static void sd_write_byte(SDState *sd, uint8_t value)
+static void sdcard_write_data_dump(const char *proto, const char *cmd_desc,
+                                   uint8_t cmd, uint32_t offset,
+                                   const void *buf, size_t len)
+{
+    g_autoptr(GString) str = NULL;
+
+    if (trace_event_get_state_backends(TRACE_SDCARD_WRITE_DATA)) {
+        str = qemu_hexdump_line(NULL, buf, len, 8, 0);
+        trace_sdcard_write_data(proto, cmd_desc, cmd, offset, str->str);
+    }
+}
+
+static size_t sd_write_data(SDState *sd, const void *buf, size_t length)
 {
     unsigned int partition_access;
     int i;
+    const uint8_t *value = buf;
 
     if (!sd->blk || !blk_is_inserted(sd->blk)) {
-        return;
+        return length;
     }
 
     if (sd->state != sd_receivingdata_state) {
         qemu_log_mask(LOG_GUEST_ERROR,
                       "%s: not in Receiving-Data state\n", __func__);
-        return;
+        return length;
     }
 
     if (sd->card_status & (ADDRESS_ERROR | WP_VIOLATION))
-        return;
+        return length;
 
-    trace_sdcard_write_data(sd->proto->name,
-                            sd->last_cmd_name,
-                            sd->current_cmd, sd->data_offset, value);
+    sdcard_write_data_dump(sd->proto->name,
+                           sd->last_cmd_name,
+                           sd->current_cmd, sd->data_offset, buf, length);
     switch (sd->current_cmd) {
     case 24:  /* CMD24:  WRITE_SINGLE_BLOCK */
-        if (sd_generic_write_byte(sd, value)) {
+        if (sd_generic_write_data(sd, buf, &length)) {
             /* TODO: Check CRC before committing */
             sd->state = sd_programming_state;
             sd_blk_write(sd, sd->data_start, sd->data_offset);
@@ -2673,6 +2695,12 @@ static void sd_write_byte(SDState *sd, uint8_t value)
         break;
 
     case 25:  /* CMD25:  WRITE_MULTIPLE_BLOCK */
+        /*
+         * Only read one byte at a time. We will be called again with the
+         * remaining.
+         */
+        length = 1;
+
         if (sd->data_offset == 0) {
             /* Start of the block - let's check the address is valid */
             if (!address_in_range(sd, "WRITE_MULTIPLE_BLOCK",
@@ -2686,7 +2714,7 @@ static void sd_write_byte(SDState *sd, uint8_t value)
                 }
             }
         }
-        sd->data[sd->data_offset++] = value;
+        sd->data[sd->data_offset++] = value[0];
         if (sd->data_offset >= sd->blk_len) {
             /* TODO: Check CRC before committing */
             sd->state = sd_programming_state;
@@ -2716,7 +2744,7 @@ static void sd_write_byte(SDState *sd, uint8_t value)
         break;
 
     case 26:  /* CMD26:  PROGRAM_CID */
-        if (sd_generic_write_byte(sd, value)) {
+        if (sd_generic_write_data(sd, buf, &length)) {
             /* TODO: Check CRC before committing */
             sd->state = sd_programming_state;
             for (i = 0; i < sizeof(sd->cid); i ++)
@@ -2734,7 +2762,7 @@ static void sd_write_byte(SDState *sd, uint8_t value)
         break;
 
     case 27:  /* CMD27:  PROGRAM_CSD */
-        if (sd_generic_write_byte(sd, value)) {
+        if (sd_generic_write_data(sd, buf, &length)) {
             /* TODO: Check CRC before committing */
             sd->state = sd_programming_state;
             for (i = 0; i < sizeof(sd->csd); i ++)
@@ -2757,7 +2785,7 @@ static void sd_write_byte(SDState *sd, uint8_t value)
         break;
 
     case 42:  /* CMD42:  LOCK_UNLOCK */
-        if (sd_generic_write_byte(sd, value)) {
+        if (sd_generic_write_data(sd, buf, &length)) {
             /* TODO: Check CRC before committing */
             sd->state = sd_programming_state;
             sd_lock_command(sd);
@@ -2767,34 +2795,39 @@ static void sd_write_byte(SDState *sd, uint8_t value)
         break;
 
     case 56:  /* CMD56:  GEN_CMD */
-        sd_generic_write_byte(sd, value);
+        sd_generic_write_data(sd, buf, &length);
         break;
 
     default:
         g_assert_not_reached();
     }
+
+    return length;
 }
 
-static uint8_t sd_read_byte(SDState *sd)
+static size_t sd_read_data(SDState *sd, void *buf, size_t length)
 {
     /* TODO: Append CRCs */
     const uint8_t dummy_byte = 0x00;
     unsigned int partition_access;
-    uint8_t ret;
     uint32_t io_len;
+    uint8_t *value = buf;
 
     if (!sd->blk || !blk_is_inserted(sd->blk)) {
-        return dummy_byte;
+        memset(buf, dummy_byte, length);
+        return length;
     }
 
     if (sd->state != sd_sendingdata_state) {
         qemu_log_mask(LOG_GUEST_ERROR,
                       "%s: not in Sending-Data state\n", __func__);
-        return dummy_byte;
+        memset(buf, dummy_byte, length);
+        return length;
     }
 
     if (sd->card_status & (ADDRESS_ERROR | WP_VIOLATION)) {
-        return dummy_byte;
+        memset(buf, dummy_byte, length);
+        return length;
     }
 
     io_len = sd_blk_len(sd);
@@ -2814,10 +2847,16 @@ static uint8_t sd_read_byte(SDState *sd)
     case 30: /* CMD30:  SEND_WRITE_PROT */
     case 51: /* ACMD51: SEND_SCR */
     case 56: /* CMD56:  GEN_CMD */
-        sd_generic_read_byte(sd, &ret);
+        sd_generic_read_data(sd, buf, &length);
         break;
 
     case 18:  /* CMD18:  READ_MULTIPLE_BLOCK */
+        /*
+         * We will only read one byte at a time. We will be called again with
+         * the remaining buffer.
+         */
+        length = 1;
+
         if (sd->data_offset == 0) {
             if (!address_in_range(sd, "READ_MULTIPLE_BLOCK",
                                   sd->data_start, io_len)) {
@@ -2831,7 +2870,7 @@ static uint8_t sd_read_byte(SDState *sd)
                 sd_blk_read(sd, sd->data_start, io_len);
             }
         }
-        ret = sd->data[sd->data_offset ++];
+        *value = sd->data[sd->data_offset++];
 
         if (sd->data_offset >= io_len) {
             sd->data_start += io_len;
@@ -2850,10 +2889,10 @@ static uint8_t sd_read_byte(SDState *sd)
     default:
         qemu_log_mask(LOG_GUEST_ERROR, "%s: DAT read illegal for command %s\n",
                                        __func__, sd->last_cmd_name);
-        return dummy_byte;
+        memset(buf, dummy_byte, length);
     }
 
-    return ret;
+    return length;
 }
 
 static bool sd_receive_ready(SDState *sd)
@@ -3132,6 +3171,27 @@ static void sd_realize(DeviceState *dev, Error **errp)
                           "The RPMB partition size must be multiples of 128K"
                           "and not larger than 16384K.\n");
     }
+    if (sd_is_emmc(sd) && sd->preset_auth_key) {
+        if (strlen(sd->preset_auth_key) != 64) {
+            error_setg(errp,
+                       "Authentication key must be 32 bytes long, "
+                       "encoded hexadecimally");
+            return;
+        }
+
+        char *pos = sd->preset_auth_key;
+        unsigned int n;
+        for (n = 0; n < RPMB_KEY_MAC_LEN; n++, pos += 2) {
+            int chrs;
+            if (sscanf(pos, "%02hhx%n", &sd->rpmb.key[n], &chrs) != 1 ||
+                chrs != 2) {
+                error_setg(errp,
+                           "Authentication key contains invalid characters");
+                return;
+            }
+        }
+        sd->rpmb.key_set = 1;
+    }
 }
 
 static void emmc_realize(DeviceState *dev, Error **errp)
@@ -3156,6 +3216,7 @@ static const Property emmc_properties[] = {
     DEFINE_PROP_UINT64("boot-partition-size", SDState, boot_part_size, 0),
     DEFINE_PROP_UINT8("boot-config", SDState, boot_config, 0x0),
     DEFINE_PROP_UINT64("rpmb-partition-size", SDState, rpmb_part_size, 0),
+    DEFINE_PROP_STRING("auth-key", SDState, preset_auth_key),
 };
 
 static void sdmmc_common_class_init(ObjectClass *klass, const void *data)
@@ -3173,8 +3234,8 @@ static void sdmmc_common_class_init(ObjectClass *klass, const void *data)
     sc->get_dat_lines = sd_get_dat_lines;
     sc->get_cmd_line = sd_get_cmd_line;
     sc->do_command = sd_do_command;
-    sc->write_byte = sd_write_byte;
-    sc->read_byte = sd_read_byte;
+    sc->write_data = sd_write_data;
+    sc->read_data = sd_read_data;
     sc->receive_ready = sd_receive_ready;
     sc->data_ready = sd_data_ready;
     sc->get_inserted = sd_get_inserted;

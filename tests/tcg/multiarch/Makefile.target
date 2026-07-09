@@ -60,15 +60,6 @@ tb-link: LDFLAGS+=-lpthread
 # code to work around the compiler.
 sha1: CFLAGS+=-Wno-stringop-overread -Wno-unknown-warning-option
 
-# The vma-pthread seems very sensitive on gitlab and we currently
-# don't know if its exposing a real bug or the test is flaky.
-ifneq ($(GITLAB_CI),)
-run-vma-pthread: vma-pthread
-	$(call skip-test, $<, "flaky on CI?")
-run-plugin-vma-pthread-with-%: vma-pthread
-	$(call skip-test, $<, "flaky on CI?")
-endif
-
 run-test-mmap: test-mmap
 	$(call run-test, test-mmap, $(QEMU) $<, $< (default))
 

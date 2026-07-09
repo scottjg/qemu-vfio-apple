@@ -889,7 +889,8 @@ static void address_space_update_ioeventfds(AddressSpace *as)
  * range `cmr'.  Only the part that has intersection of the specified
  * FlatRange will be sent.
  */
-static void flat_range_coalesced_io_notify(FlatRange *fr, AddressSpace *as,
+static void flat_range_coalesced_io_notify(FlatRange *fr,
+                                           const AddressSpace *as,
                                            CoalescedMemoryRange *cmr, bool add)
 {
     AddrRange tmp;
@@ -913,7 +914,7 @@ static void flat_range_coalesced_io_notify(FlatRange *fr, AddressSpace *as,
     }
 }
 
-static void flat_range_coalesced_io_del(FlatRange *fr, AddressSpace *as)
+static void flat_range_coalesced_io_del(FlatRange *fr, const AddressSpace *as)
 {
     CoalescedMemoryRange *cmr;
 
@@ -922,7 +923,7 @@ static void flat_range_coalesced_io_del(FlatRange *fr, AddressSpace *as)
     }
 }
 
-static void flat_range_coalesced_io_add(FlatRange *fr, AddressSpace *as)
+static void flat_range_coalesced_io_add(FlatRange *fr, const AddressSpace *as)
 {
     MemoryRegion *mr = fr->mr;
     CoalescedMemoryRange *cmr;
@@ -940,7 +941,8 @@ static void
 flat_range_coalesced_io_notify_listener_add_del(FlatRange *fr,
                                                 MemoryRegionSection *mrs,
                                                 MemoryListener *listener,
-                                                AddressSpace *as, bool add)
+                                                const AddressSpace *as,
+                                                bool add)
 {
     CoalescedMemoryRange *cmr;
     MemoryRegion *mr = fr->mr;
@@ -1573,6 +1575,7 @@ void memory_region_init_io(MemoryRegion *mr, Object *owner,
                            const MemoryRegionOps *ops, void *opaque,
                            const char *name, uint64_t size)
 {
+    g_assert(!ops || !(ops->impl.unaligned && !ops->valid.unaligned));
     memory_region_init(mr, owner, name, size);
     memory_region_set_ops(mr, ops, opaque);
 }
@@ -1650,6 +1653,20 @@ bool memory_region_init_ram_from_fd(MemoryRegion *mr, Object *owner,
     rb = qemu_ram_alloc_from_fd(size, size, NULL, mr, ram_flags, fd, offset,
                                 false, errp);
     return memory_region_set_ram_block(mr, rb);
+}
+#else
+bool memory_region_init_ram_from_fd(MemoryRegion *mr,
+                                    Object *owner,
+                                    const char *name,
+                                    uint64_t size,
+                                    uint32_t ram_flags,
+                                    int fd,
+                                    ram_addr_t offset,
+                                    Error **errp)
+{
+    error_setg(errp,
+               "memory_region_init_ram_from_fd is not supported on this platform");
+    return false;
 }
 #endif
 
@@ -1754,6 +1771,7 @@ static void memory_region_finalize(Object *obj)
     memory_region_clear_coalescing(mr);
     g_free((char *)mr->name);
     g_free(mr->ioeventfds);
+    object_unref(mr->rdm);
 }
 
 Object *memory_region_owner(const MemoryRegion *mr)
@@ -1811,6 +1829,16 @@ bool memory_region_is_ram_device(const MemoryRegion *mr)
 bool memory_region_is_protected(const MemoryRegion *mr)
 {
     return mr->ram && (mr->ram_block->flags & RAM_PROTECTED);
+}
+
+bool memory_region_skip_iommu_map(const MemoryRegion *mr)
+{
+    return memory_region_is_ram_device(mr) && mr->ram_device_skip_iommu_map;
+}
+
+void memory_region_set_skip_iommu_map(MemoryRegion *mr, bool skip)
+{
+    mr->ram_device_skip_iommu_map = skip;
 }
 
 bool memory_region_has_guest_memfd(const MemoryRegion *mr)
@@ -2042,75 +2070,33 @@ RamDiscardManager *memory_region_get_ram_discard_manager(MemoryRegion *mr)
     return mr->rdm;
 }
 
-int memory_region_set_ram_discard_manager(MemoryRegion *mr,
-                                          RamDiscardManager *rdm)
+int memory_region_add_ram_discard_source(MemoryRegion *mr,
+                                         RamDiscardSource *source)
 {
     g_assert(memory_region_is_ram(mr));
-    if (mr->rdm && rdm) {
-        return -EBUSY;
+
+    if (!mr->rdm) {
+        mr->rdm = ram_discard_manager_new(mr);
     }
 
-    mr->rdm = rdm;
+    return ram_discard_manager_add_source(mr->rdm, source);
+}
+
+int memory_region_del_ram_discard_source(MemoryRegion *mr,
+                                          RamDiscardSource *source)
+{
+    int ret;
+    g_assert(mr->rdm);
+
+    ret = ram_discard_manager_del_source(mr->rdm, source);
+    if (ret != 0) {
+        return ret;
+    }
+    if (QLIST_EMPTY(&mr->rdm->source_list) && QLIST_EMPTY(&mr->rdm->rdl_list)) {
+        object_unref(mr->rdm);
+        mr->rdm = NULL;
+    }
     return 0;
-}
-
-uint64_t ram_discard_manager_get_min_granularity(const RamDiscardManager *rdm,
-                                                 const MemoryRegion *mr)
-{
-    RamDiscardManagerClass *rdmc = RAM_DISCARD_MANAGER_GET_CLASS(rdm);
-
-    g_assert(rdmc->get_min_granularity);
-    return rdmc->get_min_granularity(rdm, mr);
-}
-
-bool ram_discard_manager_is_populated(const RamDiscardManager *rdm,
-                                      const MemoryRegionSection *section)
-{
-    RamDiscardManagerClass *rdmc = RAM_DISCARD_MANAGER_GET_CLASS(rdm);
-
-    g_assert(rdmc->is_populated);
-    return rdmc->is_populated(rdm, section);
-}
-
-int ram_discard_manager_replay_populated(const RamDiscardManager *rdm,
-                                         MemoryRegionSection *section,
-                                         ReplayRamDiscardState replay_fn,
-                                         void *opaque)
-{
-    RamDiscardManagerClass *rdmc = RAM_DISCARD_MANAGER_GET_CLASS(rdm);
-
-    g_assert(rdmc->replay_populated);
-    return rdmc->replay_populated(rdm, section, replay_fn, opaque);
-}
-
-int ram_discard_manager_replay_discarded(const RamDiscardManager *rdm,
-                                         MemoryRegionSection *section,
-                                         ReplayRamDiscardState replay_fn,
-                                         void *opaque)
-{
-    RamDiscardManagerClass *rdmc = RAM_DISCARD_MANAGER_GET_CLASS(rdm);
-
-    g_assert(rdmc->replay_discarded);
-    return rdmc->replay_discarded(rdm, section, replay_fn, opaque);
-}
-
-void ram_discard_manager_register_listener(RamDiscardManager *rdm,
-                                           RamDiscardListener *rdl,
-                                           MemoryRegionSection *section)
-{
-    RamDiscardManagerClass *rdmc = RAM_DISCARD_MANAGER_GET_CLASS(rdm);
-
-    g_assert(rdmc->register_listener);
-    rdmc->register_listener(rdm, rdl, section);
-}
-
-void ram_discard_manager_unregister_listener(RamDiscardManager *rdm,
-                                             RamDiscardListener *rdl)
-{
-    RamDiscardManagerClass *rdmc = RAM_DISCARD_MANAGER_GET_CLASS(rdm);
-
-    g_assert(rdmc->unregister_listener);
-    rdmc->unregister_listener(rdm, rdl);
 }
 
 /* Called with rcu_read_lock held.  */
@@ -2982,7 +2968,7 @@ void memory_global_dirty_log_stop(unsigned int flags)
 }
 
 static void listener_add_address_space(MemoryListener *listener,
-                                       AddressSpace *as)
+                                       const AddressSpace *as)
 {
     unsigned i;
     FlatView *view;
@@ -3047,7 +3033,7 @@ static void listener_add_address_space(MemoryListener *listener,
 }
 
 static void listener_del_address_space(MemoryListener *listener,
-                                       AddressSpace *as)
+                                       const AddressSpace *as)
 {
     unsigned i;
     FlatView *view;
@@ -3152,7 +3138,7 @@ void memory_listener_unregister(MemoryListener *listener)
     listener->address_space = NULL;
 }
 
-void address_space_remove_listeners(AddressSpace *as)
+void address_space_remove_listeners(const AddressSpace *as)
 {
     while (!QTAILQ_EMPTY(&as->listeners)) {
         memory_listener_unregister(QTAILQ_FIRST(&as->listeners));
@@ -3742,17 +3728,10 @@ static const TypeInfo iommu_memory_region_info = {
     .abstract           = true,
 };
 
-static const TypeInfo ram_discard_manager_info = {
-    .parent             = TYPE_INTERFACE,
-    .name               = TYPE_RAM_DISCARD_MANAGER,
-    .class_size         = sizeof(RamDiscardManagerClass),
-};
-
 static void memory_register_types(void)
 {
     type_register_static(&memory_region_info);
     type_register_static(&iommu_memory_region_info);
-    type_register_static(&ram_discard_manager_info);
 }
 
 type_init(memory_register_types)

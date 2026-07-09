@@ -1,19 +1,20 @@
 gen = decodetree.process('insns.decode')
 
-microblaze_ss = ss.source_set()
-microblaze_ss.add(gen)
-microblaze_ss.add(files(
+microblaze_common_ss = ss.source_set()
+microblaze_common_ss.add(gen)
+microblaze_common_ss.add(files(
   'cpu.c',
+  'gdbstub.c',
   'helper.c',
   'op_helper.c',
   'translate.c',
 ))
 
 microblaze_user_ss = ss.source_set()
-microblaze_user_ss.add(files('gdbstub.c'))
+microblaze_user_ss.add_all(microblaze_common_ss)
 
 microblaze_common_system_ss = ss.source_set()
-microblaze_common_system_ss.add(files('gdbstub.c'))
+microblaze_common_system_ss.add_all(microblaze_common_ss)
 
 microblaze_system_ss = ss.source_set()
 microblaze_system_ss.add(files(
@@ -21,7 +22,6 @@ microblaze_system_ss.add(files(
   'machine.c',
 ))
 
-target_arch += {'microblaze': microblaze_ss}
 target_user_arch += {'microblaze': microblaze_user_ss}
 target_system_arch += {'microblaze': microblaze_system_ss}
 target_common_system_arch += {'microblaze': microblaze_common_system_ss}

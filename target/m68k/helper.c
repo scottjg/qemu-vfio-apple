@@ -25,6 +25,7 @@
 #include "exec/target_page.h"
 #include "exec/gdbstub.h"
 #include "exec/helper-proto.h"
+#include "accel/tcg/cpu-loop.h"
 #include "system/memory.h"
 #include "gdbstub/helpers.h"
 #include "fpu/softfloat.h"
@@ -907,7 +908,7 @@ txfail:
     return -1;
 }
 
-hwaddr m68k_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
+hwaddr m68k_cpu_get_phys_addr_debug(CPUState *cs, vaddr addr)
 {
     CPUM68KState *env = cpu_env(cs);
     hwaddr phys_addr;

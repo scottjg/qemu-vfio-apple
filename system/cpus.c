@@ -40,8 +40,10 @@
 #include "system/cpus.h"
 #include "qemu/guest-random.h"
 #include "hw/core/nmi.h"
+#include "system/physmem.h"
 #include "system/replay.h"
 #include "system/runstate.h"
+#include "migration/misc.h"
 #include "system/cpu-timers.h"
 #include "system/whpx.h"
 #include "hw/core/boards.h"
@@ -342,7 +344,7 @@ bool cpu_can_run(CPUState *cpu)
 void cpu_handle_guest_debug(CPUState *cpu)
 {
     if (replay_running_debug()) {
-        if (!cpu->singlestep_enabled) {
+        if (!cpu_single_stepping(cpu)) {
             /*
              * Report about the breakpoint and
              * make a single step to skip it
@@ -621,6 +623,7 @@ void cpu_pause(CPUState *cpu)
 
 void cpu_resume(CPUState *cpu)
 {
+    cpu->exception_index = -1;
     cpu->stop = false;
     cpu->stopped = false;
     qemu_cpu_kick(cpu);
@@ -841,6 +844,11 @@ void qmp_memsave(uint64_t addr, uint64_t size, const char *filename,
     uint8_t buf[1024];
     uint64_t orig_addr = addr, orig_size = size;
 
+    if (migration_guest_ram_loading()) {
+        error_setg(errp, "Guest memory access not allowed during migration");
+        return;
+    }
+
     if (!has_cpu) {
         cpu_index = 0;
     }
@@ -887,6 +895,11 @@ void qmp_pmemsave(uint64_t addr, uint64_t size, const char *filename,
     uint64_t l;
     uint8_t buf[1024];
 
+    if (migration_guest_ram_loading()) {
+        error_setg(errp, "Guest memory access not allowed during migration");
+        return;
+    }
+
     f = fopen(filename, "wb");
     if (!f) {
         error_setg_file_open(errp, errno, filename);
@@ -897,7 +910,7 @@ void qmp_pmemsave(uint64_t addr, uint64_t size, const char *filename,
         l = sizeof(buf);
         if (l > size)
             l = size;
-        cpu_physical_memory_read(addr, buf, l);
+        physical_memory_read(addr, buf, l);
         if (fwrite(buf, 1, l, f) != l) {
             error_setg(errp, "writing memory to '%s' failed",
                        filename);

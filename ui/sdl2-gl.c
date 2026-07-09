@@ -115,7 +115,7 @@ void sdl2_gl_refresh(DisplayChangeListener *dcl)
 
     assert(scon->opengl);
 
-    graphic_hw_update(dcl->con);
+    qemu_console_hw_update(dcl->con);
     if (scon->updates && scon->real_window) {
         scon->updates = 0;
         sdl2_gl_render_surface(scon);

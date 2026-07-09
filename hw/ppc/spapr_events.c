@@ -28,6 +28,7 @@
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "system/device_tree.h"
+#include "system/physmem.h"
 #include "system/runstate.h"
 
 #include "hw/ppc/fdt.h"
@@ -460,7 +461,7 @@ static void rtas_event_log_queue(SpaprMachineState *spapr,
 static SpaprEventLogEntry *rtas_event_log_dequeue(SpaprMachineState *spapr,
                                                   uint32_t event_mask)
 {
-    SpaprEventLogEntry *entry = NULL;
+    SpaprEventLogEntry *entry;
 
     QTAILQ_FOREACH(entry, &spapr->pending_events, next) {
         const SpaprEventSource *source =
@@ -482,7 +483,7 @@ static SpaprEventLogEntry *rtas_event_log_dequeue(SpaprMachineState *spapr,
 
 static bool rtas_event_log_contains(SpaprMachineState *spapr, uint32_t event_mask)
 {
-    SpaprEventLogEntry *entry = NULL;
+    SpaprEventLogEntry *entry;
 
     QTAILQ_FOREACH(entry, &spapr->pending_events, next) {
         const SpaprEventSource *source =
@@ -855,9 +856,9 @@ static void spapr_mce_dispatch_elog(SpaprMachineState *spapr, PowerPCCPU *cpu,
 
     stq_be_phys(&address_space_memory, rtas_addr + RTAS_ERROR_LOG_OFFSET,
                 env->gpr[3]);
-    cpu_physical_memory_write(rtas_addr + RTAS_ERROR_LOG_OFFSET +
+    physical_memory_write(rtas_addr + RTAS_ERROR_LOG_OFFSET +
                               sizeof(env->gpr[3]), &log, sizeof(log));
-    cpu_physical_memory_write(rtas_addr + RTAS_ERROR_LOG_OFFSET +
+    physical_memory_write(rtas_addr + RTAS_ERROR_LOG_OFFSET +
                               sizeof(env->gpr[3]) + sizeof(log), ext_elog,
                               sizeof(*ext_elog));
     g_free(ext_elog);
@@ -964,8 +965,8 @@ static void check_exception(PowerPCCPU *cpu, SpaprMachineState *spapr,
 
     header.summary = cpu_to_be32(event->summary);
     header.extended_length = cpu_to_be32(event->extended_length);
-    cpu_physical_memory_write(buf, &header, sizeof(header));
-    cpu_physical_memory_write(buf + sizeof(header), event->extended_log,
+    physical_memory_write(buf, &header, sizeof(header));
+    physical_memory_write(buf + sizeof(header), event->extended_log,
                               event->extended_length);
     rtas_st(rets, 0, RTAS_OUT_SUCCESS);
     g_free(event->extended_log);

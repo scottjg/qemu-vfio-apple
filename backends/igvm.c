@@ -26,6 +26,29 @@
 #include <igvm/igvm.h>
 #include <igvm/igvm_defs.h>
 
+#ifdef CONFIG_FDT
+#include <libfdt.h>
+#endif
+
+#ifndef IGVM_VHT_OPTIONAL_BIT
+#define IGVM_VHT_OPTIONAL_BIT (1U << 31)
+#endif
+
+/*
+ * Bit 31 of the variable header type indicates that the header is
+ * optional and can be safely ignored by a loader that does not
+ * support it. If the bit is clear, the file cannot be loaded.
+ * https://docs.rs/igvm_defs/0.4.0/igvm_defs/struct.IgvmVariableHeaderType.html
+ */
+static IgvmVariableHeaderType igvm_vht_type(IgvmVariableHeaderType type)
+{
+    return type & ~IGVM_VHT_OPTIONAL_BIT;
+}
+
+static bool igvm_vht_optional(IgvmVariableHeaderType type)
+{
+    return !!(type & IGVM_VHT_OPTIONAL_BIT);
+}
 
 /*
  * Some directives are specific to particular confidential computing platforms.
@@ -62,7 +85,8 @@ struct QEMU_PACKED sev_id_authentication {
 #define IGVM_SEV_ID_BLOCK_VERSION 1
 
 QIgvmParameterData*
-qigvm_find_param_entry(QIgvm *igvm, uint32_t parameter_area_index)
+qigvm_find_param_entry(QIgvm *igvm, uint32_t parameter_area_index,
+                       Error **errp)
 {
     QIgvmParameterData *param_entry;
     QTAILQ_FOREACH(param_entry, &igvm->parameter_data, next)
@@ -71,7 +95,8 @@ qigvm_find_param_entry(QIgvm *igvm, uint32_t parameter_area_index)
             return param_entry;
         }
     }
-    warn_report("IGVM: No parameter area for index %u", parameter_area_index);
+    error_setg(errp, "IGVM: parameter area index %u not found",
+                   parameter_area_index);
     return NULL;
 }
 
@@ -100,10 +125,14 @@ static int qigvm_directive_snp_id_block(QIgvm *ctx, const uint8_t *header_data,
 static int qigvm_initialization_guest_policy(QIgvm *ctx,
                                        const uint8_t *header_data,
                                        Error **errp);
+#ifdef CONFIG_FDT
+static int qigvm_directive_device_tree(QIgvm *ctx, const uint8_t *header_data,
+                                       Error **errp);
+#endif
 
 struct QIGVMHandler {
-    uint32_t type;
-    uint32_t section;
+    IgvmVariableHeaderType type;
+    IgvmHeaderSection section;
     int (*handler)(QIgvm *ctx, const uint8_t *header_data, Error **errp);
 };
 
@@ -130,14 +159,20 @@ static struct QIGVMHandler handlers[] = {
       qigvm_initialization_guest_policy },
     { IGVM_VHT_MADT, IGVM_HEADER_SECTION_DIRECTIVE,
       qigvm_directive_madt },
+#ifdef CONFIG_FDT
+    { IGVM_VHT_DEVICE_TREE, IGVM_HEADER_SECTION_DIRECTIVE,
+      qigvm_directive_device_tree },
+#endif
 };
 
-static int qigvm_handler(QIgvm *ctx, uint32_t type, Error **errp)
+static int qigvm_handler(QIgvm *ctx, IgvmVariableHeaderType raw_type,
+                         Error **errp)
 {
     size_t handler;
     IgvmHandle header_handle;
     const uint8_t *header_data;
     int result;
+    IgvmVariableHeaderType type = igvm_vht_type(raw_type);
 
     for (handler = 0; handler < G_N_ELEMENTS(handlers); handler++) {
         if (handlers[handler].type != type) {
@@ -166,6 +201,13 @@ static int qigvm_handler(QIgvm *ctx, uint32_t type, Error **errp)
         igvm_free_buffer(ctx->file, header_handle);
         return result;
     }
+
+    if (igvm_vht_optional(raw_type)) {
+        warn_report("IGVM: Skipping unsupported optional header type 0x%"
+                    PRIX32, type);
+        return 0;
+    }
+
     error_setg(errp,
                "IGVM: Unknown header type encountered when processing file: "
                "(type 0x%X)",
@@ -198,8 +240,8 @@ static void *qigvm_prepare_memory(QIgvm *ctx, uint64_t addr, uint64_t size,
             error_setg(
                 errp,
                 "Processing of IGVM file failed: Could not prepare memory "
-                "at address 0x%" PRIx64 ": region size exceeded",
-                addr);
+                "at address 0x%" PRIx64 ": region size 0x%" PRIx64 " exceeded",
+                addr, size);
             return NULL;
         }
         return qemu_map_ram_ptr(mrs.mr->ram_block, mrs.offset_within_region);
@@ -500,9 +542,10 @@ static int qigvm_directive_parameter_insert(QIgvm *ctx,
         return 0;
     }
 
-    param_entry = qigvm_find_param_entry(ctx, param->parameter_area_index);
+    param_entry = qigvm_find_param_entry(ctx,
+                                         param->parameter_area_index, errp);
     if (param_entry == NULL) {
-        return 0;
+        return -1;
     }
 
     region = qigvm_prepare_memory(ctx, param->gpa, param_entry->size,
@@ -573,9 +616,10 @@ static int qigvm_directive_memory_map(QIgvm *ctx, const uint8_t *header_data,
     }
 
     /* Find the parameter area that should hold the memory map */
-    param_entry = qigvm_find_param_entry(ctx, param->parameter_area_index);
+    param_entry = qigvm_find_param_entry(ctx,
+                                         param->parameter_area_index, errp);
     if (param_entry == NULL) {
-        return 0;
+        return -1;
     }
 
     max_entry_count = param_entry->size / sizeof(IGVM_VHS_MEMORY_MAP_ENTRY);
@@ -632,9 +676,10 @@ static int qigvm_directive_vp_count(QIgvm *ctx, const uint8_t *header_data,
     uint32_t *vp_count;
     CPUState *cpu;
 
-    param_entry = qigvm_find_param_entry(ctx, param->parameter_area_index);
+    param_entry = qigvm_find_param_entry(ctx,
+                                         param->parameter_area_index, errp);
     if (param_entry == NULL) {
-        return 0;
+        return -1;
     }
 
     vp_count = (uint32_t *)(param_entry->data + param->byte_offset);
@@ -655,9 +700,10 @@ static int qigvm_directive_environment_info(QIgvm *ctx,
     QIgvmParameterData *param_entry;
     IgvmEnvironmentInfo *environmental_state;
 
-    param_entry = qigvm_find_param_entry(ctx, param->parameter_area_index);
+    param_entry = qigvm_find_param_entry(ctx,
+                                         param->parameter_area_index, errp);
     if (param_entry == NULL) {
-        return 0;
+        return -1;
     }
 
     environmental_state =
@@ -752,6 +798,48 @@ static int qigvm_directive_snp_id_block(QIgvm *ctx, const uint8_t *header_data,
     return 0;
 }
 
+#ifdef CONFIG_FDT
+static int qigvm_directive_device_tree(QIgvm *ctx, const uint8_t *header_data,
+                                       Error **errp)
+{
+    const IGVM_VHS_PARAMETER *param = (const IGVM_VHS_PARAMETER *)header_data;
+    g_autofree void *fdt_packed = NULL;
+    QIgvmParameterData *param_entry;
+    uint32_t fdt_size;
+
+    param_entry = qigvm_find_param_entry(ctx,
+                                         param->parameter_area_index, errp);
+    if (param_entry == NULL) {
+        return -1;
+    }
+
+    if (ctx->machine_state->fdt == NULL) {
+        error_setg(errp, "IGVM: device tree not available");
+        return -1;
+    }
+
+    fdt_size = fdt_totalsize(ctx->machine_state->fdt);
+    fdt_packed = g_memdup2(ctx->machine_state->fdt, fdt_size);
+
+    if (fdt_pack(fdt_packed)) {
+        error_setg(errp, "IGVM: failed to pack device tree");
+        return -1;
+    }
+
+    fdt_size = fdt_totalsize(fdt_packed);
+    if (fdt_size > param_entry->size) {
+        error_setg(errp,
+                   "IGVM: device tree size exceeds parameter area"
+                   " defined in IGVM file");
+        return -1;
+    }
+
+    memcpy(param_entry->data, fdt_packed, fdt_size);
+
+    return 0;
+}
+#endif
+
 static int qigvm_initialization_guest_policy(QIgvm *ctx,
                                        const uint8_t *header_data, Error **errp)
 {
@@ -787,6 +875,7 @@ static int qigvm_supported_platform_compat_mask(QIgvm *ctx, Error **errp)
          header_index++) {
         IgvmVariableHeaderType typ = igvm_get_header_type(
             ctx->file, IGVM_HEADER_SECTION_PLATFORM, header_index);
+        typ = igvm_vht_type(typ);
         if (typ == IGVM_VHT_SUPPORTED_PLATFORM) {
             header_handle = igvm_get_header(
                 ctx->file, IGVM_HEADER_SECTION_PLATFORM, header_index);
@@ -945,10 +1034,10 @@ int qigvm_process_file(IgvmCfg *cfg, MachineState *machine_state,
     for (ctx.current_header_index = 0;
          ctx.current_header_index < (unsigned)header_count;
          ctx.current_header_index++) {
-        IgvmVariableHeaderType type = igvm_get_header_type(
+        IgvmVariableHeaderType raw_type = igvm_get_header_type(
             ctx.file, IGVM_HEADER_SECTION_DIRECTIVE, ctx.current_header_index);
-        if (!onlyVpContext || (type == IGVM_VHT_VP_CONTEXT)) {
-            if (qigvm_handler(&ctx, type, errp) < 0) {
+        if (!onlyVpContext || igvm_vht_type(raw_type) == IGVM_VHT_VP_CONTEXT) {
+            if (qigvm_handler(&ctx, raw_type, errp) < 0) {
                 goto cleanup_parameters;
             }
         }

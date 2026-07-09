@@ -40,7 +40,7 @@ process_size() {
     alignment=$3
     image_arg=$4
     if [ "${image_arg#*:}" = "$image_arg"  ]; then
-        if ! size=$(wc -c < "$image_file" 2>/dev/null); then
+        if ! size=$(wc -c 2>/dev/null < "$image_file"); then
             echo "Missing $name image '$image_file'." >&2
             exit 1
         fi
@@ -102,7 +102,7 @@ check_truncation() {
     if [ "$image_file" = "/dev/zero" ]; then
         return
     fi
-    if ! actual_size=$(wc -c < "$image_file" 2>/dev/null); then
+    if ! actual_size=$(wc -c 2>/dev/null < "$image_file"); then
         echo "Missing image '$image_file'." >&2
         exit 1
     fi

@@ -17,7 +17,9 @@
 #define QEMU_KVM_H
 
 #include "exec/memattrs.h"
+#include "gdbstub/enums.h"
 #include "qemu/accel.h"
+#include "accel/accel-route.h"
 #include "qom/object.h"
 
 #ifdef COMPILING_PER_TARGET
@@ -182,11 +184,6 @@ DECLARE_INSTANCE_CHECKER(KVMState, KVM_STATE,
 extern KVMState *kvm_state;
 typedef struct Notifier Notifier;
 typedef struct NotifierWithReturn NotifierWithReturn;
-
-typedef struct KVMRouteChange {
-     KVMState *s;
-     int changes;
-} KVMRouteChange;
 
 /* external API */
 
@@ -416,9 +413,11 @@ int kvm_arch_insert_sw_breakpoint(CPUState *cpu,
                                   struct kvm_sw_breakpoint *bp);
 int kvm_arch_remove_sw_breakpoint(CPUState *cpu,
                                   struct kvm_sw_breakpoint *bp);
-int kvm_arch_insert_hw_breakpoint(vaddr addr, vaddr len, int type);
-int kvm_arch_remove_hw_breakpoint(vaddr addr, vaddr len, int type);
-void kvm_arch_remove_all_hw_breakpoints(void);
+int kvm_arch_insert_gdbstub_hw_breakpoint(vaddr addr, vaddr len,
+                                          GdbBreakpointType type);
+int kvm_arch_remove_gdbstub_hw_breakpoint(vaddr addr, vaddr len,
+                                          GdbBreakpointType type);
+void kvm_arch_remove_all_gdbstub_hw_breakpoints(void);
 
 void kvm_arch_update_guest_debug(CPUState *cpu, struct kvm_guest_debug *dbg);
 
@@ -466,7 +465,7 @@ void kvm_init_cpu_signals(CPUState *cpu);
 
 /**
  * kvm_irqchip_add_msi_route - Add MSI route for specific vector
- * @c:      KVMRouteChange instance.
+ * @c:      AccelRouteChange instance.
  * @vector: which vector to add. This can be either MSI/MSIX
  *          vector. The function will automatically detect whether
  *          MSI/MSIX is enabled, and fetch corresponding MSI
@@ -475,23 +474,10 @@ void kvm_init_cpu_signals(CPUState *cpu);
  *          as @NULL, an empty MSI message will be inited.
  * @return: virq (>=0) when success, errno (<0) when failed.
  */
-int kvm_irqchip_add_msi_route(KVMRouteChange *c, int vector, PCIDevice *dev);
+int kvm_irqchip_add_msi_route(AccelRouteChange *c, int vector, PCIDevice *dev);
 int kvm_irqchip_update_msi_route(KVMState *s, int virq, MSIMessage msg,
                                  PCIDevice *dev);
 void kvm_irqchip_commit_routes(KVMState *s);
-
-static inline KVMRouteChange kvm_irqchip_begin_route_changes(KVMState *s)
-{
-    return (KVMRouteChange) { .s = s, .changes = 0 };
-}
-
-static inline void kvm_irqchip_commit_route_changes(KVMRouteChange *c)
-{
-    if (c->changes) {
-        kvm_irqchip_commit_routes(c->s);
-        c->changes = 0;
-    }
-}
 
 int kvm_irqchip_get_virq(KVMState *s);
 void kvm_irqchip_release_virq(KVMState *s, int virq);

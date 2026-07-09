@@ -25,6 +25,7 @@ class TuxRunAarch64Test(TuxRunBaselineTest):
 
     def test_arm64(self):
         self.set_machine('virt')
+        self.require_accelerator('tcg')
         self.cpu='cortex-a57'
         self.console='ttyAMA0'
         self.wait_for_shutdown=False
@@ -40,6 +41,7 @@ class TuxRunAarch64Test(TuxRunBaselineTest):
 
     def test_arm64be(self):
         self.set_machine('virt')
+        self.require_accelerator('tcg')
         self.cpu='cortex-a57'
         self.console='ttyAMA0'
         self.wait_for_shutdown=False

@@ -933,7 +933,7 @@ VFIOUserProxy *vfio_user_connect_dev(SocketAddress *addr, Error **errp)
     qemu_cond_init(&proxy->close_cv);
 
     if (vfio_user_iothread == NULL) {
-        vfio_user_iothread = iothread_create("VFIO user", errp);
+        vfio_user_iothread = iothread_create("vfio-user", errp);
     }
 
     proxy->ctx = iothread_get_aio_context(vfio_user_iothread);
@@ -1081,9 +1081,11 @@ static bool check_migr_pgsize(VFIOUserProxy *proxy, QObject *qobj, Error **errp)
         return false;
     }
 
-    /* must be larger than default */
-    if (pgsize & (VFIO_USER_DEF_PGSIZE - 1)) {
-        error_setg(errp, "pgsize 0x%"PRIx64" too small", pgsize);
+    /* must not be zero or smaller than default */
+    if (pgsize < VFIO_USER_DEF_PGSIZE ||
+        (pgsize & (VFIO_USER_DEF_PGSIZE - 1))) {
+        error_setg(errp, "%s 0x%"PRIx64" too small",
+                   VFIO_USER_CAP_PGSIZE, pgsize);
         return false;
     }
 
@@ -1155,9 +1157,11 @@ static bool check_pgsizes(VFIOUserProxy *proxy, QObject *qobj, Error **errp)
         return false;
     }
 
-    /* must be larger than default */
-    if (pgsizes & (VFIO_USER_DEF_PGSIZE - 1)) {
-        error_setg(errp, "pgsize 0x%"PRIx64" too small", pgsizes);
+    /* must not be zero or smaller than default */
+    if (pgsizes < VFIO_USER_DEF_PGSIZE ||
+        (pgsizes & (VFIO_USER_DEF_PGSIZE - 1))) {
+        error_setg(errp, "%s 0x%"PRIx64" too small",
+                   VFIO_USER_CAP_PGSIZES, pgsizes);
         return false;
     }
 
@@ -1190,8 +1194,8 @@ static bool check_migr(VFIOUserProxy *proxy, QObject *qobj, Error **errp)
     QDict *qdict = qobject_to(QDict, qobj);
 
     if (qdict == NULL) {
-        error_setg(errp, "malformed %s", VFIO_USER_CAP_MAX_FDS);
-        return true;
+        error_setg(errp, "malformed %s", VFIO_USER_CAP_MIGR);
+        return false;
     }
     return caps_parse(proxy, qdict, caps_migr, errp);
 }
@@ -1288,7 +1292,7 @@ bool vfio_user_validate_version(VFIOUserProxy *proxy, Error **errp)
 {
     g_autofree VFIOUserVersion *msgp = NULL;
     GString *caps;
-    char *reply;
+    const char *reply = "";
     int size, caplen;
 
     caps = caps_json();
@@ -1318,17 +1322,24 @@ bool vfio_user_validate_version(VFIOUserProxy *proxy, Error **errp)
         return false;
     }
 
-    reply = msgp->capabilities;
-    if (reply[msgp->hdr.size - sizeof(*msgp) - 1] != '\0') {
-        error_setg(errp, "corrupt version reply");
+    if (msgp->hdr.size < sizeof(*msgp)) {
+        error_setg(errp, "short version reply");
         return false;
     }
 
-    if (!caps_check(proxy, msgp->minor, reply, errp)) {
-        return false;
+    if (msgp->hdr.size > sizeof(*msgp)) {
+        reply = msgp->capabilities;
+        if (reply[msgp->hdr.size - sizeof(*msgp) - 1] != '\0') {
+            error_setg(errp, "corrupt version reply");
+            return false;
+        }
+
+        if (!caps_check(proxy, msgp->minor, reply, errp)) {
+            return false;
+        }
     }
 
-    trace_vfio_user_version(msgp->major, msgp->minor, msgp->capabilities);
+    trace_vfio_user_version(msgp->major, msgp->minor, reply);
     return true;
 }
 

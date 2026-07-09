@@ -203,7 +203,7 @@ int module_load(const char *prefix, const char *name, Error **errp)
 {
     int rv = -1;
 #ifdef CONFIG_MODULE_UPGRADES
-    char *version_dir;
+    g_autofree char *version_dir = NULL;
 #endif
     const char *search_dir;
     char *dirs[5];

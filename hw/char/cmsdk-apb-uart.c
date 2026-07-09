@@ -236,10 +236,7 @@ buffer_drained:
 
 static void uart_cancel_transmit(CMSDKAPBUART *s)
 {
-    if (s->watch_tag) {
-        g_source_remove(s->watch_tag);
-        s->watch_tag = 0;
-    }
+    g_clear_handle_id(&s->watch_tag, g_source_remove);
 }
 
 static void uart_write(void *opaque, hwaddr offset, uint64_t value,

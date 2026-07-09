@@ -401,7 +401,6 @@ static int cpu_post_load(void *opaque, int version_id)
         env->dr[7] = dr7 & ~(DR7_GLOBAL_BP_MASK | DR7_LOCAL_BP_MASK);
         cpu_x86_update_dr7(env, dr7);
     }
-    tlb_flush(cs);
     return 0;
 }
 
@@ -1756,7 +1755,7 @@ static const VMStateDescription vmstate_apx = {
     .minimum_version_id = 1,
     .needed = apx_needed,
     .fields = (VMStateField[]) {
-        VMSTATE_UINTTL_SUB_ARRAY(env.regs, X86CPU, CPU_NB_REGS,
+        VMSTATE_UINT64_SUB_ARRAY(env.regs, X86CPU, CPU_NB_REGS,
                                  CPU_NB_EREGS - CPU_NB_REGS),
         VMSTATE_END_OF_LIST()
     }

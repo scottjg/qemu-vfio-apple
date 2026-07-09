@@ -91,12 +91,6 @@ Maintainer controlled job variables
 The following variables may be set when defining a job in the
 CI configuration file.
 
-QEMU_JOB_CIRRUS
-~~~~~~~~~~~~~~~
-
-The job makes use of Cirrus CI infrastructure, requiring the
-configuration setup for cirrus-run to be present in the repository
-
 QEMU_JOB_OPTIONAL
 ~~~~~~~~~~~~~~~~~
 
@@ -130,6 +124,13 @@ QEMU_JOB_FUNCTIONAL
 ~~~~~~~~~~~~~~~~~~~
 
 The job runs the functional test suite
+
+QEMU_JOB_MACOS
+~~~~~~~~~~~~~~
+
+The job requires access to the macOS shared runners, which are
+only available to Premium/Ultimate tiers. This includes OSS project
+members, but not forks.
 
 Contributor controlled runtime variables
 ----------------------------------------

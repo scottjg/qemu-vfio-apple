@@ -1153,13 +1153,13 @@ static void qxl_enter_vga_mode(PCIQXLDevice *d)
     }
     trace_qxl_enter_vga_mode(d->id);
     spice_qxl_driver_unload(&d->ssd.qxl);
-    graphic_console_set_hwops(d->ssd.dcl.con, d->vga.hw_ops, &d->vga);
-    update_displaychangelistener(&d->ssd.dcl, GUI_REFRESH_INTERVAL_DEFAULT);
+    qemu_graphic_console_set_hwops(d->ssd.dcl.con, d->vga.hw_ops, &d->vga);
+    qemu_console_listener_set_refresh(&d->ssd.dcl, GUI_REFRESH_INTERVAL_DEFAULT);
     qemu_spice_create_host_primary(&d->ssd);
     d->mode = QXL_MODE_VGA;
     qemu_spice_display_switch(&d->ssd, d->ssd.ds);
     vga_dirty_log_start(&d->vga);
-    graphic_hw_update(d->vga.con);
+    qemu_console_hw_update(d->vga.con);
 }
 
 static void qxl_exit_vga_mode(PCIQXLDevice *d)
@@ -1168,8 +1168,8 @@ static void qxl_exit_vga_mode(PCIQXLDevice *d)
         return;
     }
     trace_qxl_exit_vga_mode(d->id);
-    graphic_console_set_hwops(d->ssd.dcl.con, &qxl_ops, d);
-    update_displaychangelistener(&d->ssd.dcl, GUI_REFRESH_INTERVAL_IDLE);
+    qemu_graphic_console_set_hwops(d->ssd.dcl.con, &qxl_ops, d);
+    qemu_console_listener_set_refresh(&d->ssd.dcl, GUI_REFRESH_INTERVAL_IDLE);
     vga_dirty_log_stop(&d->vga);
     qxl_destroy_primary(d, QXL_SYNC);
 }
@@ -2237,7 +2237,7 @@ static void qxl_realize_primary(PCIDevice *dev, Error **errp)
     portio_list_add(&qxl->vga_port_list, pci_address_space_io(dev), 0x3b0);
     qxl->have_vga = true;
 
-    vga->con = graphic_console_init(DEVICE(dev), 0, &qxl_ops, qxl);
+    vga->con = qemu_graphic_console_create(DEVICE(dev), 0, &qxl_ops, qxl);
     qxl->id = qemu_console_get_index(vga->con); /* == channel_id */
     if (qxl->id != 0) {
         error_setg(errp, "primary qxl-vga device must be console 0 "
@@ -2251,9 +2251,7 @@ static void qxl_realize_primary(PCIDevice *dev, Error **errp)
         return;
     }
 
-    qxl->ssd.dcl.ops = &display_listener_ops;
-    qxl->ssd.dcl.con = vga->con;
-    register_displaychangelistener(&qxl->ssd.dcl);
+    qemu_console_register_listener(vga->con, &qxl->ssd.dcl, &display_listener_ops);
 }
 
 static void qxl_realize_secondary(PCIDevice *dev, Error **errp)
@@ -2264,7 +2262,7 @@ static void qxl_realize_secondary(PCIDevice *dev, Error **errp)
     memory_region_init_ram(&qxl->vga.vram, OBJECT(dev), "qxl.vgavram",
                            qxl->vga.vram_size, &error_fatal);
     qxl->vga.vram_ptr = memory_region_get_ram_ptr(&qxl->vga.vram);
-    qxl->vga.con = graphic_console_init(DEVICE(dev), 0, &qxl_ops, qxl);
+    qxl->vga.con = qemu_graphic_console_create(DEVICE(dev), 0, &qxl_ops, qxl);
     qxl->ssd.dcl.con = qxl->vga.con;
     qxl->id = qemu_console_get_index(qxl->vga.con); /* == channel_id */
 

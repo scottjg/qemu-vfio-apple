@@ -1226,10 +1226,7 @@ static void usbredir_chardev_close_bh(void *opaque)
         usbredirparser_destroy(dev->parser);
         dev->parser = NULL;
     }
-    if (dev->watch) {
-        g_source_remove(dev->watch);
-        dev->watch = 0;
-    }
+    g_clear_handle_id(&dev->watch, g_source_remove);
 }
 
 static void usbredir_create_parser(USBRedirDevice *dev)
@@ -1494,9 +1491,7 @@ static void usbredir_unrealize(USBDevice *udev)
     if (dev->parser) {
         usbredirparser_destroy(dev->parser);
     }
-    if (dev->watch) {
-        g_source_remove(dev->watch);
-    }
+    g_clear_handle_id(&dev->watch, g_source_remove);
 
     free(dev->filter_rules);
     qemu_del_vm_change_state_handler(dev->vmstate);

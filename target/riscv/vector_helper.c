@@ -285,7 +285,7 @@ vext_continuous_ldst_host(CPURISCVState *env, vext_ldst_elem_fn_host *ldst_host,
     }
 }
 
-static void vext_set_tail_elems_1s(target_ulong vl, void *vd,
+static void vext_set_tail_elems_1s(uint32_t vl, void *vd,
                                    uint32_t desc, uint32_t nf,
                                    uint32_t esz, uint32_t max_elems)
 {
@@ -387,6 +387,12 @@ vext_page_ldst_us(CPURISCVState *env, void *vd, target_ulong addr,
     uint32_t size = (elems * nf) << log2_esz;
     uint32_t evl = env->vstart + elems;
     MMUAccessType access_type = is_load ? MMU_DATA_LOAD : MMU_DATA_STORE;
+
+    /*
+     * Maximum vector length is VLMAX == 2^16 == LMUL * VL / SEW, and
+     * occurs for LMUL == 8, SEW == 8, VL == 2^16.
+     */
+    g_assert(env->vstart < UINT16_MAX && UINT16_MAX - env->vstart >= elems);
 
     /* Check page permission/pmp/watchpoint/etc. */
     probe_pages(env, addr, size, ra, access_type, mmu_index, &host, &flags,
@@ -2141,6 +2147,24 @@ GEN_VEXT_VMV_VX(vmv_v_x_h, int16_t, H2)
 GEN_VEXT_VMV_VX(vmv_v_x_w, int32_t, H4)
 GEN_VEXT_VMV_VX(vmv_v_x_d, int64_t, H8)
 
+#define GEN_VEXT_SET_VELEM0(NAME, ETYPE, H)                             \
+void HELPER(NAME)(void *vd, uint64_t s1, CPURISCVState *env,            \
+                  uint32_t desc)                                        \
+{                                                                       \
+    uint32_t esz = sizeof(ETYPE);                                       \
+    uint32_t vlenb = riscv_cpu_cfg(env)->vlenb;                         \
+    uint32_t vta = vext_vta(desc);                                      \
+                                                                        \
+    *((ETYPE *)vd + H(0)) = (ETYPE)s1;                                  \
+    /* Treat every element past vd[0] as tail for scalar-to-vector moves. */ \
+    vext_set_elems_1s(vd, vta, esz, vlenb);                             \
+}
+
+GEN_VEXT_SET_VELEM0(vset_velem0_b, int8_t,  H1)
+GEN_VEXT_SET_VELEM0(vset_velem0_h, int16_t, H2)
+GEN_VEXT_SET_VELEM0(vset_velem0_w, int32_t, H4)
+GEN_VEXT_SET_VELEM0(vset_velem0_d, int64_t, H8)
+
 #define GEN_VEXT_VMERGE_VV(NAME, ETYPE, H)                           \
 void HELPER(NAME)(void *vd, void *v0, void *vs1, void *vs2,          \
                   CPURISCVState *env, uint32_t desc)                 \
@@ -2206,12 +2230,12 @@ GEN_VEXT_VMERGE_VX(vmerge_vxm_d, int64_t, H8)
  * define common macros for fixed point here.
  */
 typedef void opivv2_rm_fn(void *vd, void *vs1, void *vs2, int i,
-                          CPURISCVState *env, int vxrm);
+                          CPURISCVState *env, uint8_t vxrm);
 
 #define OPIVV2_RM(NAME, TD, T1, T2, TX1, TX2, HD, HS1, HS2, OP)     \
 static inline void                                                  \
 do_##NAME(void *vd, void *vs1, void *vs2, int i,                    \
-          CPURISCVState *env, int vxrm)                             \
+          CPURISCVState *env, uint8_t vxrm)                         \
 {                                                                   \
     TX1 s1 = *((T1 *)vs1 + HS1(i));                                 \
     TX2 s2 = *((T2 *)vs2 + HS2(i));                                 \
@@ -2221,7 +2245,7 @@ do_##NAME(void *vd, void *vs1, void *vs2, int i,                    \
 static inline void
 vext_vv_rm_1(void *vd, void *v0, void *vs1, void *vs2,
              CPURISCVState *env,
-             uint32_t vl, uint32_t vm, int vxrm,
+             uint32_t vl, uint32_t vm, uint8_t vxrm,
              opivv2_rm_fn *fn, uint32_t vma, uint32_t esz)
 {
     for (uint32_t i = env->vstart; i < vl; i++) {
@@ -2280,7 +2304,7 @@ void HELPER(NAME)(void *vd, void *v0, void *vs1, void *vs2,     \
                  do_##NAME, ESZ);                               \
 }
 
-static inline uint8_t saddu8(CPURISCVState *env, int vxrm, uint8_t a,
+static inline uint8_t saddu8(CPURISCVState *env, uint8_t vxrm, uint8_t a,
                              uint8_t b)
 {
     uint8_t res = a + b;
@@ -2291,7 +2315,7 @@ static inline uint8_t saddu8(CPURISCVState *env, int vxrm, uint8_t a,
     return res;
 }
 
-static inline uint16_t saddu16(CPURISCVState *env, int vxrm, uint16_t a,
+static inline uint16_t saddu16(CPURISCVState *env, uint8_t vxrm, uint16_t a,
                                uint16_t b)
 {
     uint16_t res = a + b;
@@ -2302,7 +2326,7 @@ static inline uint16_t saddu16(CPURISCVState *env, int vxrm, uint16_t a,
     return res;
 }
 
-static inline uint32_t saddu32(CPURISCVState *env, int vxrm, uint32_t a,
+static inline uint32_t saddu32(CPURISCVState *env, uint8_t vxrm, uint32_t a,
                                uint32_t b)
 {
     uint32_t res = a + b;
@@ -2313,7 +2337,7 @@ static inline uint32_t saddu32(CPURISCVState *env, int vxrm, uint32_t a,
     return res;
 }
 
-static inline uint64_t saddu64(CPURISCVState *env, int vxrm, uint64_t a,
+static inline uint64_t saddu64(CPURISCVState *env, uint8_t vxrm, uint64_t a,
                                uint64_t b)
 {
     uint64_t res = a + b;
@@ -2334,12 +2358,12 @@ GEN_VEXT_VV_RM(vsaddu_vv_w, 4)
 GEN_VEXT_VV_RM(vsaddu_vv_d, 8)
 
 typedef void opivx2_rm_fn(void *vd, target_long s1, void *vs2, int i,
-                          CPURISCVState *env, int vxrm);
+                          CPURISCVState *env, uint8_t vxrm);
 
 #define OPIVX2_RM(NAME, TD, T1, T2, TX1, TX2, HD, HS2, OP)          \
 static inline void                                                  \
 do_##NAME(void *vd, target_long s1, void *vs2, int i,               \
-          CPURISCVState *env, int vxrm)                             \
+          CPURISCVState *env, uint8_t vxrm)                         \
 {                                                                   \
     TX2 s2 = *((T2 *)vs2 + HS2(i));                                 \
     *((TD *)vd + HD(i)) = OP(env, vxrm, s2, (TX1)(T1)s1);           \
@@ -2348,7 +2372,7 @@ do_##NAME(void *vd, target_long s1, void *vs2, int i,               \
 static inline void
 vext_vx_rm_1(void *vd, void *v0, target_long s1, void *vs2,
              CPURISCVState *env,
-             uint32_t vl, uint32_t vm, int vxrm,
+             uint32_t vl, uint32_t vm, uint8_t vxrm,
              opivx2_rm_fn *fn, uint32_t vma, uint32_t esz)
 {
     for (uint32_t i = env->vstart; i < vl; i++) {
@@ -2417,7 +2441,8 @@ GEN_VEXT_VX_RM(vsaddu_vx_h, 2)
 GEN_VEXT_VX_RM(vsaddu_vx_w, 4)
 GEN_VEXT_VX_RM(vsaddu_vx_d, 8)
 
-static inline int8_t sadd8(CPURISCVState *env, int vxrm, int8_t a, int8_t b)
+static inline int8_t sadd8(CPURISCVState *env, uint8_t vxrm, int8_t a,
+                           int8_t b)
 {
     int8_t res = a + b;
     if ((res ^ a) & (res ^ b) & INT8_MIN) {
@@ -2427,7 +2452,7 @@ static inline int8_t sadd8(CPURISCVState *env, int vxrm, int8_t a, int8_t b)
     return res;
 }
 
-static inline int16_t sadd16(CPURISCVState *env, int vxrm, int16_t a,
+static inline int16_t sadd16(CPURISCVState *env, uint8_t vxrm, int16_t a,
                              int16_t b)
 {
     int16_t res = a + b;
@@ -2438,7 +2463,7 @@ static inline int16_t sadd16(CPURISCVState *env, int vxrm, int16_t a,
     return res;
 }
 
-static inline int32_t sadd32(CPURISCVState *env, int vxrm, int32_t a,
+static inline int32_t sadd32(CPURISCVState *env, uint8_t vxrm, int32_t a,
                              int32_t b)
 {
     int32_t res = a + b;
@@ -2449,7 +2474,7 @@ static inline int32_t sadd32(CPURISCVState *env, int vxrm, int32_t a,
     return res;
 }
 
-static inline int64_t sadd64(CPURISCVState *env, int vxrm, int64_t a,
+static inline int64_t sadd64(CPURISCVState *env, uint8_t vxrm, int64_t a,
                              int64_t b)
 {
     int64_t res = a + b;
@@ -2478,7 +2503,7 @@ GEN_VEXT_VX_RM(vsadd_vx_h, 2)
 GEN_VEXT_VX_RM(vsadd_vx_w, 4)
 GEN_VEXT_VX_RM(vsadd_vx_d, 8)
 
-static inline uint8_t ssubu8(CPURISCVState *env, int vxrm, uint8_t a,
+static inline uint8_t ssubu8(CPURISCVState *env, uint8_t vxrm, uint8_t a,
                              uint8_t b)
 {
     uint8_t res = a - b;
@@ -2489,7 +2514,7 @@ static inline uint8_t ssubu8(CPURISCVState *env, int vxrm, uint8_t a,
     return res;
 }
 
-static inline uint16_t ssubu16(CPURISCVState *env, int vxrm, uint16_t a,
+static inline uint16_t ssubu16(CPURISCVState *env, uint8_t vxrm, uint16_t a,
                                uint16_t b)
 {
     uint16_t res = a - b;
@@ -2500,7 +2525,7 @@ static inline uint16_t ssubu16(CPURISCVState *env, int vxrm, uint16_t a,
     return res;
 }
 
-static inline uint32_t ssubu32(CPURISCVState *env, int vxrm, uint32_t a,
+static inline uint32_t ssubu32(CPURISCVState *env, uint8_t vxrm, uint32_t a,
                                uint32_t b)
 {
     uint32_t res = a - b;
@@ -2511,7 +2536,7 @@ static inline uint32_t ssubu32(CPURISCVState *env, int vxrm, uint32_t a,
     return res;
 }
 
-static inline uint64_t ssubu64(CPURISCVState *env, int vxrm, uint64_t a,
+static inline uint64_t ssubu64(CPURISCVState *env, uint8_t vxrm, uint64_t a,
                                uint64_t b)
 {
     uint64_t res = a - b;
@@ -2540,7 +2565,8 @@ GEN_VEXT_VX_RM(vssubu_vx_h, 2)
 GEN_VEXT_VX_RM(vssubu_vx_w, 4)
 GEN_VEXT_VX_RM(vssubu_vx_d, 8)
 
-static inline int8_t ssub8(CPURISCVState *env, int vxrm, int8_t a, int8_t b)
+static inline int8_t ssub8(CPURISCVState *env, uint8_t vxrm, int8_t a,
+                           int8_t b)
 {
     int8_t res = a - b;
     if ((res ^ a) & (a ^ b) & INT8_MIN) {
@@ -2550,7 +2576,7 @@ static inline int8_t ssub8(CPURISCVState *env, int vxrm, int8_t a, int8_t b)
     return res;
 }
 
-static inline int16_t ssub16(CPURISCVState *env, int vxrm, int16_t a,
+static inline int16_t ssub16(CPURISCVState *env, uint8_t vxrm, int16_t a,
                              int16_t b)
 {
     int16_t res = a - b;
@@ -2561,7 +2587,7 @@ static inline int16_t ssub16(CPURISCVState *env, int vxrm, int16_t a,
     return res;
 }
 
-static inline int32_t ssub32(CPURISCVState *env, int vxrm, int32_t a,
+static inline int32_t ssub32(CPURISCVState *env, uint8_t vxrm, int32_t a,
                              int32_t b)
 {
     int32_t res = a - b;
@@ -2572,7 +2598,7 @@ static inline int32_t ssub32(CPURISCVState *env, int vxrm, int32_t a,
     return res;
 }
 
-static inline int64_t ssub64(CPURISCVState *env, int vxrm, int64_t a,
+static inline int64_t ssub64(CPURISCVState *env, uint8_t vxrm, int64_t a,
                              int64_t b)
 {
     int64_t res = a - b;
@@ -2602,7 +2628,7 @@ GEN_VEXT_VX_RM(vssub_vx_w, 4)
 GEN_VEXT_VX_RM(vssub_vx_d, 8)
 
 /* Vector Single-Width Averaging Add and Subtract */
-static inline uint8_t get_round(int vxrm, uint64_t v, uint8_t shift)
+static inline uint8_t get_round(uint8_t vxrm, uint64_t v, uint8_t shift)
 {
     uint8_t d = extract64(v, shift, 1);
     uint8_t d1;
@@ -2614,22 +2640,30 @@ static inline uint8_t get_round(int vxrm, uint64_t v, uint8_t shift)
 
     d1 = extract64(v, shift - 1, 1);
     D1 = extract64(v, 0, shift);
-    if (vxrm == 0) { /* round-to-nearest-up (add +0.5 LSB) */
+    switch (vxrm) {
+    case 0:
+        /* round-to-nearest-up (add +0.5 LSB) */
         return d1;
-    } else if (vxrm == 1) { /* round-to-nearest-even */
+    case 1:
+        /* round-to-nearest-even */
         if (shift > 1) {
             D2 = extract64(v, 0, shift - 1);
             return d1 & ((D2 != 0) | d);
         } else {
             return d1 & d;
         }
-    } else if (vxrm == 3) { /* round-to-odd (OR bits into LSB, aka "jam") */
+    case 2:
+        /* round-down (truncate) */
+        return 0;
+    case 3:
+        /* round-to-odd (OR bits into LSB, aka "jam") */
         return !d & (D1 != 0);
+    default:
+        g_assert_not_reached();
     }
-    return 0; /* round-down (truncate) */
 }
 
-static inline int32_t aadd32(CPURISCVState *env, int vxrm, int32_t a,
+static inline int32_t aadd32(CPURISCVState *env, uint8_t vxrm, int32_t a,
                              int32_t b)
 {
     int64_t res = (int64_t)a + b;
@@ -2638,7 +2672,7 @@ static inline int32_t aadd32(CPURISCVState *env, int vxrm, int32_t a,
     return (res >> 1) + round;
 }
 
-static inline int64_t aadd64(CPURISCVState *env, int vxrm, int64_t a,
+static inline int64_t aadd64(CPURISCVState *env, uint8_t vxrm, int64_t a,
                              int64_t b)
 {
     int64_t res = a + b;
@@ -2667,7 +2701,7 @@ GEN_VEXT_VX_RM(vaadd_vx_h, 2)
 GEN_VEXT_VX_RM(vaadd_vx_w, 4)
 GEN_VEXT_VX_RM(vaadd_vx_d, 8)
 
-static inline uint32_t aaddu32(CPURISCVState *env, int vxrm,
+static inline uint32_t aaddu32(CPURISCVState *env, uint8_t vxrm,
                                uint32_t a, uint32_t b)
 {
     uint64_t res = (uint64_t)a + b;
@@ -2676,7 +2710,7 @@ static inline uint32_t aaddu32(CPURISCVState *env, int vxrm,
     return (res >> 1) + round;
 }
 
-static inline uint64_t aaddu64(CPURISCVState *env, int vxrm,
+static inline uint64_t aaddu64(CPURISCVState *env, uint8_t vxrm,
                                uint64_t a, uint64_t b)
 {
     uint64_t res = a + b;
@@ -2704,7 +2738,7 @@ GEN_VEXT_VX_RM(vaaddu_vx_h, 2)
 GEN_VEXT_VX_RM(vaaddu_vx_w, 4)
 GEN_VEXT_VX_RM(vaaddu_vx_d, 8)
 
-static inline int32_t asub32(CPURISCVState *env, int vxrm, int32_t a,
+static inline int32_t asub32(CPURISCVState *env, uint8_t vxrm, int32_t a,
                              int32_t b)
 {
     int64_t res = (int64_t)a - b;
@@ -2713,7 +2747,7 @@ static inline int32_t asub32(CPURISCVState *env, int vxrm, int32_t a,
     return (res >> 1) + round;
 }
 
-static inline int64_t asub64(CPURISCVState *env, int vxrm, int64_t a,
+static inline int64_t asub64(CPURISCVState *env, uint8_t vxrm, int64_t a,
                              int64_t b)
 {
     int64_t res = (int64_t)a - b;
@@ -2742,7 +2776,7 @@ GEN_VEXT_VX_RM(vasub_vx_h, 2)
 GEN_VEXT_VX_RM(vasub_vx_w, 4)
 GEN_VEXT_VX_RM(vasub_vx_d, 8)
 
-static inline uint32_t asubu32(CPURISCVState *env, int vxrm,
+static inline uint32_t asubu32(CPURISCVState *env, uint8_t vxrm,
                                uint32_t a, uint32_t b)
 {
     int64_t res = (int64_t)a - b;
@@ -2751,7 +2785,7 @@ static inline uint32_t asubu32(CPURISCVState *env, int vxrm,
     return (res >> 1) + round;
 }
 
-static inline uint64_t asubu64(CPURISCVState *env, int vxrm,
+static inline uint64_t asubu64(CPURISCVState *env, uint8_t vxrm,
                                uint64_t a, uint64_t b)
 {
     uint64_t res = (uint64_t)a - b;
@@ -2780,7 +2814,8 @@ GEN_VEXT_VX_RM(vasubu_vx_w, 4)
 GEN_VEXT_VX_RM(vasubu_vx_d, 8)
 
 /* Vector Single-Width Fractional Multiply with Rounding and Saturation */
-static inline int8_t vsmul8(CPURISCVState *env, int vxrm, int8_t a, int8_t b)
+static inline int8_t vsmul8(CPURISCVState *env, uint8_t vxrm, int8_t a,
+                            int8_t b)
 {
     uint8_t round;
     int16_t res;
@@ -2800,7 +2835,7 @@ static inline int8_t vsmul8(CPURISCVState *env, int vxrm, int8_t a, int8_t b)
     }
 }
 
-static int16_t vsmul16(CPURISCVState *env, int vxrm, int16_t a, int16_t b)
+static int16_t vsmul16(CPURISCVState *env, uint8_t vxrm, int16_t a, int16_t b)
 {
     uint8_t round;
     int32_t res;
@@ -2820,7 +2855,7 @@ static int16_t vsmul16(CPURISCVState *env, int vxrm, int16_t a, int16_t b)
     }
 }
 
-static int32_t vsmul32(CPURISCVState *env, int vxrm, int32_t a, int32_t b)
+static int32_t vsmul32(CPURISCVState *env, uint8_t vxrm, int32_t a, int32_t b)
 {
     uint8_t round;
     int64_t res;
@@ -2840,7 +2875,7 @@ static int32_t vsmul32(CPURISCVState *env, int vxrm, int32_t a, int32_t b)
     }
 }
 
-static int64_t vsmul64(CPURISCVState *env, int vxrm, int64_t a, int64_t b)
+static int64_t vsmul64(CPURISCVState *env, uint8_t vxrm, int64_t a, int64_t b)
 {
     uint8_t round;
     uint64_t hi_64, lo_64;
@@ -2888,7 +2923,7 @@ GEN_VEXT_VX_RM(vsmul_vx_d, 8)
 
 /* Vector Single-Width Scaling Shift Instructions */
 static inline uint8_t
-vssrl8(CPURISCVState *env, int vxrm, uint8_t a, uint8_t b)
+vssrl8(CPURISCVState *env, uint8_t vxrm, uint8_t a, uint8_t b)
 {
     uint8_t round, shift = b & 0x7;
     uint8_t res;
@@ -2898,7 +2933,7 @@ vssrl8(CPURISCVState *env, int vxrm, uint8_t a, uint8_t b)
     return res;
 }
 static inline uint16_t
-vssrl16(CPURISCVState *env, int vxrm, uint16_t a, uint16_t b)
+vssrl16(CPURISCVState *env, uint8_t vxrm, uint16_t a, uint16_t b)
 {
     uint8_t round, shift = b & 0xf;
 
@@ -2906,7 +2941,7 @@ vssrl16(CPURISCVState *env, int vxrm, uint16_t a, uint16_t b)
     return (a >> shift) + round;
 }
 static inline uint32_t
-vssrl32(CPURISCVState *env, int vxrm, uint32_t a, uint32_t b)
+vssrl32(CPURISCVState *env, uint8_t vxrm, uint32_t a, uint32_t b)
 {
     uint8_t round, shift = b & 0x1f;
 
@@ -2914,7 +2949,7 @@ vssrl32(CPURISCVState *env, int vxrm, uint32_t a, uint32_t b)
     return (a >> shift) + round;
 }
 static inline uint64_t
-vssrl64(CPURISCVState *env, int vxrm, uint64_t a, uint64_t b)
+vssrl64(CPURISCVState *env, uint8_t vxrm, uint64_t a, uint64_t b)
 {
     uint8_t round, shift = b & 0x3f;
 
@@ -2940,7 +2975,7 @@ GEN_VEXT_VX_RM(vssrl_vx_w, 4)
 GEN_VEXT_VX_RM(vssrl_vx_d, 8)
 
 static inline int8_t
-vssra8(CPURISCVState *env, int vxrm, int8_t a, int8_t b)
+vssra8(CPURISCVState *env, uint8_t vxrm, int8_t a, int8_t b)
 {
     uint8_t round, shift = b & 0x7;
 
@@ -2948,7 +2983,7 @@ vssra8(CPURISCVState *env, int vxrm, int8_t a, int8_t b)
     return (a >> shift) + round;
 }
 static inline int16_t
-vssra16(CPURISCVState *env, int vxrm, int16_t a, int16_t b)
+vssra16(CPURISCVState *env, uint8_t vxrm, int16_t a, int16_t b)
 {
     uint8_t round, shift = b & 0xf;
 
@@ -2956,7 +2991,7 @@ vssra16(CPURISCVState *env, int vxrm, int16_t a, int16_t b)
     return (a >> shift) + round;
 }
 static inline int32_t
-vssra32(CPURISCVState *env, int vxrm, int32_t a, int32_t b)
+vssra32(CPURISCVState *env, uint8_t vxrm, int32_t a, int32_t b)
 {
     uint8_t round, shift = b & 0x1f;
 
@@ -2964,7 +2999,7 @@ vssra32(CPURISCVState *env, int vxrm, int32_t a, int32_t b)
     return (a >> shift) + round;
 }
 static inline int64_t
-vssra64(CPURISCVState *env, int vxrm, int64_t a, int64_t b)
+vssra64(CPURISCVState *env, uint8_t vxrm, int64_t a, int64_t b)
 {
     uint8_t round, shift = b & 0x3f;
 
@@ -2992,7 +3027,7 @@ GEN_VEXT_VX_RM(vssra_vx_d, 8)
 
 /* Vector Narrowing Fixed-Point Clip Instructions */
 static inline int8_t
-vnclip8(CPURISCVState *env, int vxrm, int16_t a, int8_t b)
+vnclip8(CPURISCVState *env, uint8_t vxrm, int16_t a, int8_t b)
 {
     uint8_t round, shift = b & 0xf;
     int16_t res;
@@ -3011,7 +3046,7 @@ vnclip8(CPURISCVState *env, int vxrm, int16_t a, int8_t b)
 }
 
 static inline int16_t
-vnclip16(CPURISCVState *env, int vxrm, int32_t a, int16_t b)
+vnclip16(CPURISCVState *env, uint8_t vxrm, int32_t a, int16_t b)
 {
     uint8_t round, shift = b & 0x1f;
     int32_t res;
@@ -3030,7 +3065,7 @@ vnclip16(CPURISCVState *env, int vxrm, int32_t a, int16_t b)
 }
 
 static inline int32_t
-vnclip32(CPURISCVState *env, int vxrm, int64_t a, int32_t b)
+vnclip32(CPURISCVState *env, uint8_t vxrm, int64_t a, int32_t b)
 {
     uint8_t round, shift = b & 0x3f;
     int64_t res;
@@ -3063,7 +3098,7 @@ GEN_VEXT_VX_RM(vnclip_wx_h, 2)
 GEN_VEXT_VX_RM(vnclip_wx_w, 4)
 
 static inline uint8_t
-vnclipu8(CPURISCVState *env, int vxrm, uint16_t a, uint8_t b)
+vnclipu8(CPURISCVState *env, uint8_t vxrm, uint16_t a, uint8_t b)
 {
     uint8_t round, shift = b & 0xf;
     uint16_t res;
@@ -3079,7 +3114,7 @@ vnclipu8(CPURISCVState *env, int vxrm, uint16_t a, uint8_t b)
 }
 
 static inline uint16_t
-vnclipu16(CPURISCVState *env, int vxrm, uint32_t a, uint16_t b)
+vnclipu16(CPURISCVState *env, uint8_t vxrm, uint32_t a, uint16_t b)
 {
     uint8_t round, shift = b & 0x1f;
     uint32_t res;
@@ -3095,7 +3130,7 @@ vnclipu16(CPURISCVState *env, int vxrm, uint32_t a, uint16_t b)
 }
 
 static inline uint32_t
-vnclipu32(CPURISCVState *env, int vxrm, uint64_t a, uint32_t b)
+vnclipu32(CPURISCVState *env, uint8_t vxrm, uint64_t a, uint32_t b)
 {
     uint8_t round, shift = b & 0x3f;
     uint64_t res;
@@ -3137,34 +3172,36 @@ static void do_##NAME(void *vd, void *vs1, void *vs2, int i,   \
     *((TD *)vd + HD(i)) = OP(s2, s1, &env->fp_status);         \
 }
 
-#define GEN_VEXT_VV_ENV(NAME, ESZ)                        \
-void HELPER(NAME)(void *vd, void *v0, void *vs1,          \
-                  void *vs2, CPURISCVState *env,          \
-                  uint32_t desc)                          \
-{                                                         \
-    uint32_t vm = vext_vm(desc);                          \
-    uint32_t vl = env->vl;                                \
-    uint32_t total_elems =                                \
-        vext_get_total_elems(env, desc, ESZ);             \
-    uint32_t vta = vext_vta(desc);                        \
-    uint32_t vma = vext_vma(desc);                        \
-    uint32_t i;                                           \
-                                                          \
-    VSTART_CHECK_EARLY_EXIT(env, vl);                     \
-                                                          \
-    for (i = env->vstart; i < vl; i++) {                  \
-        if (!vm && !vext_elem_mask(v0, i)) {              \
-            /* set masked-off elements to 1s */           \
-            vext_set_elems_1s(vd, vma, i * ESZ,           \
-                              (i + 1) * ESZ);             \
-            continue;                                     \
-        }                                                 \
-        do_##NAME(vd, vs1, vs2, i, env);                  \
-    }                                                     \
-    env->vstart = 0;                                      \
-    /* set tail elements to 1s */                         \
-    vext_set_elems_1s(vd, vta, vl * ESZ,                  \
-                      total_elems * ESZ);                 \
+#define GEN_VEXT_VV_ENV(NAME, ESZ)                           \
+void HELPER(NAME)(void *vd, void *v0, void *vs1, void *vs2,  \
+                  CPURISCVState *env, uint32_t desc)         \
+{                                                            \
+    uint32_t vm = vext_vm(desc);                             \
+    uint32_t vl = env->vl;                                   \
+    uint32_t total_elems =                                   \
+        vext_get_total_elems(env, desc, ESZ);                \
+    uint32_t vta = vext_vta(desc);                           \
+    uint32_t vma = vext_vma(desc);                           \
+    uint32_t i;                                              \
+    FloatExceptionFlags pre_fflag =                          \
+        get_float_exception_flags(&env->fp_status);          \
+                                                             \
+    VSTART_CHECK_EARLY_EXIT(env, vl);                        \
+                                                             \
+    for (i = env->vstart; i < vl; i++) {                     \
+        if (!vm && !vext_elem_mask(v0, i)) {                 \
+            /* set masked-off elements to 1s */              \
+            vext_set_elems_1s(vd, vma, i * ESZ,              \
+                              (i + 1) * ESZ);                \
+            continue;                                        \
+        }                                                    \
+        do_##NAME(vd, vs1, vs2, i, env);                     \
+    }                                                        \
+    env->vstart = 0;                                         \
+    /* set tail elements to 1s */                            \
+    vext_set_elems_1s(vd, vta, vl * ESZ,                     \
+                      total_elems * ESZ);                    \
+    riscv_cpu_check_fflags(env, pre_fflag);                  \
 }
 
 RVVCALL(OPFVV2, vfadd_vv_h_bf16, OP_UUU_H, H2, H2, H2, bfloat16_add)
@@ -3184,34 +3221,36 @@ static void do_##NAME(void *vd, uint64_t s1, void *vs2, int i, \
     *((TD *)vd + HD(i)) = OP(s2, (TX1)(T1)s1, &env->fp_status);\
 }
 
-#define GEN_VEXT_VF(NAME, ESZ)                            \
-void HELPER(NAME)(void *vd, void *v0, uint64_t s1,        \
-                  void *vs2, CPURISCVState *env,          \
-                  uint32_t desc)                          \
-{                                                         \
-    uint32_t vm = vext_vm(desc);                          \
-    uint32_t vl = env->vl;                                \
-    uint32_t total_elems =                                \
-        vext_get_total_elems(env, desc, ESZ);             \
-    uint32_t vta = vext_vta(desc);                        \
-    uint32_t vma = vext_vma(desc);                        \
-    uint32_t i;                                           \
-                                                          \
-    VSTART_CHECK_EARLY_EXIT(env, vl);                     \
-                                                          \
-    for (i = env->vstart; i < vl; i++) {                  \
-        if (!vm && !vext_elem_mask(v0, i)) {              \
-            /* set masked-off elements to 1s */           \
-            vext_set_elems_1s(vd, vma, i * ESZ,           \
-                              (i + 1) * ESZ);             \
-            continue;                                     \
-        }                                                 \
-        do_##NAME(vd, s1, vs2, i, env);                   \
-    }                                                     \
-    env->vstart = 0;                                      \
-    /* set tail elements to 1s */                         \
-    vext_set_elems_1s(vd, vta, vl * ESZ,                  \
-                      total_elems * ESZ);                 \
+#define GEN_VEXT_VF(NAME, ESZ)                                   \
+void HELPER(NAME)(void *vd, void *v0, uint64_t s1, void *vs2,    \
+                  CPURISCVState *env, uint32_t desc)             \
+{                                                                \
+    uint32_t vm = vext_vm(desc);                                 \
+    uint32_t vl = env->vl;                                       \
+    uint32_t total_elems =                                       \
+        vext_get_total_elems(env, desc, ESZ);                    \
+    uint32_t vta = vext_vta(desc);                               \
+    uint32_t vma = vext_vma(desc);                               \
+    uint32_t i;                                                  \
+    FloatExceptionFlags pre_fflag =                              \
+        get_float_exception_flags(&env->fp_status);              \
+                                                                 \
+    VSTART_CHECK_EARLY_EXIT(env, vl);                            \
+                                                                 \
+    for (i = env->vstart; i < vl; i++) {                         \
+        if (!vm && !vext_elem_mask(v0, i)) {                     \
+            /* set masked-off elements to 1s */                  \
+            vext_set_elems_1s(vd, vma, i * ESZ,                  \
+                              (i + 1) * ESZ);                    \
+            continue;                                            \
+        }                                                        \
+        do_##NAME(vd, s1, vs2, i, env);                          \
+    }                                                            \
+    env->vstart = 0;                                             \
+    /* set tail elements to 1s */                                \
+    vext_set_elems_1s(vd, vta, vl * ESZ,                         \
+                      total_elems * ESZ);                        \
+    riscv_cpu_check_fflags(env, pre_fflag);                      \
 }
 
 RVVCALL(OPFVF2, vfadd_vf_h_bf16, OP_UUU_H, H2, H2, bfloat16_add)
@@ -3958,35 +3997,38 @@ static void do_##NAME(void *vd, void *vs2, int i,      \
     *((TD *)vd + HD(i)) = OP(s2, &env->fp_status);     \
 }
 
-#define GEN_VEXT_V_ENV(NAME, ESZ)                      \
-void HELPER(NAME)(void *vd, void *v0, void *vs2,       \
-                  CPURISCVState *env, uint32_t desc)   \
-{                                                      \
-    uint32_t vm = vext_vm(desc);                       \
-    uint32_t vl = env->vl;                             \
-    uint32_t total_elems =                             \
-        vext_get_total_elems(env, desc, ESZ);          \
-    uint32_t vta = vext_vta(desc);                     \
-    uint32_t vma = vext_vma(desc);                     \
-    uint32_t i;                                        \
-                                                       \
-    VSTART_CHECK_EARLY_EXIT(env, vl);                  \
-                                                       \
-    if (vl == 0) {                                     \
-        return;                                        \
-    }                                                  \
-    for (i = env->vstart; i < vl; i++) {               \
-        if (!vm && !vext_elem_mask(v0, i)) {           \
-            /* set masked-off elements to 1s */        \
-            vext_set_elems_1s(vd, vma, i * ESZ,        \
-                              (i + 1) * ESZ);          \
-            continue;                                  \
-        }                                              \
-        do_##NAME(vd, vs2, i, env);                    \
-    }                                                  \
-    env->vstart = 0;                                   \
-    vext_set_elems_1s(vd, vta, vl * ESZ,               \
-                      total_elems * ESZ);              \
+#define GEN_VEXT_V_ENV(NAME, ESZ)                            \
+void HELPER(NAME)(void *vd, void *v0, void *vs2,             \
+                  CPURISCVState *env, uint32_t desc)         \
+{                                                            \
+    uint32_t vm = vext_vm(desc);                             \
+    uint32_t vl = env->vl;                                   \
+    uint32_t total_elems =                                   \
+        vext_get_total_elems(env, desc, ESZ);                \
+    uint32_t vta = vext_vta(desc);                           \
+    uint32_t vma = vext_vma(desc);                           \
+    uint32_t i;                                              \
+    FloatExceptionFlags pre_fflag =                          \
+        get_float_exception_flags(&env->fp_status);          \
+                                                             \
+    VSTART_CHECK_EARLY_EXIT(env, vl);                        \
+                                                             \
+    if (vl == 0) {                                           \
+        return;                                              \
+    }                                                        \
+    for (i = env->vstart; i < vl; i++) {                     \
+        if (!vm && !vext_elem_mask(v0, i)) {                 \
+            /* set masked-off elements to 1s */              \
+            vext_set_elems_1s(vd, vma, i * ESZ,              \
+                              (i + 1) * ESZ);                \
+            continue;                                        \
+        }                                                    \
+        do_##NAME(vd, vs2, i, env);                          \
+    }                                                        \
+    env->vstart = 0;                                         \
+    vext_set_elems_1s(vd, vta, vl * ESZ,                     \
+                      total_elems * ESZ);                    \
+    riscv_cpu_check_fflags(env, pre_fflag);                  \
 }
 
 RVVCALL(OPFVV1, vfsqrt_v_h, OP_UU_H, H2, H2, float16_sqrt)
@@ -4066,7 +4108,7 @@ static bfloat16 frsqrt7_h_bf16(bfloat16 f, float_status *s)
         (bfloat16_is_infinity(f) && sign) ||
         (bfloat16_is_normal(f) && sign) ||
         (bfloat16_is_zero_or_denormal(f) && !bfloat16_is_zero(f) && sign)) {
-        s->float_exception_flags |= float_flag_invalid;
+        float_raise(float_flag_invalid, s);
         return bfloat16_default_nan(s);
     }
 
@@ -4077,7 +4119,7 @@ static bfloat16 frsqrt7_h_bf16(bfloat16 f, float_status *s)
 
     /* frsqrt7(+-0) = +-inf */
     if (bfloat16_is_zero(f)) {
-        s->float_exception_flags |= float_flag_divbyzero;
+        float_raise(float_flag_divbyzero, s);
         return bfloat16_set_sign(bfloat16_infinity, sign);
     }
 
@@ -4106,7 +4148,7 @@ static float16 frsqrt7_h(float16 f, float_status *s)
         (float16_is_infinity(f) && sign) ||
         (float16_is_normal(f) && sign) ||
         (float16_is_zero_or_denormal(f) && !float16_is_zero(f) && sign)) {
-        s->float_exception_flags |= float_flag_invalid;
+        float_raise(float_flag_invalid, s);
         return float16_default_nan(s);
     }
 
@@ -4117,7 +4159,7 @@ static float16 frsqrt7_h(float16 f, float_status *s)
 
     /* frsqrt7(+-0) = +-inf */
     if (float16_is_zero(f)) {
-        s->float_exception_flags |= float_flag_divbyzero;
+        float_raise(float_flag_divbyzero, s);
         return float16_set_sign(float16_infinity, sign);
     }
 
@@ -4146,7 +4188,7 @@ static float32 frsqrt7_s(float32 f, float_status *s)
         (float32_is_infinity(f) && sign) ||
         (float32_is_normal(f) && sign) ||
         (float32_is_zero_or_denormal(f) && !float32_is_zero(f) && sign)) {
-        s->float_exception_flags |= float_flag_invalid;
+        float_raise(float_flag_invalid, s);
         return float32_default_nan(s);
     }
 
@@ -4157,7 +4199,7 @@ static float32 frsqrt7_s(float32 f, float_status *s)
 
     /* frsqrt7(+-0) = +-inf */
     if (float32_is_zero(f)) {
-        s->float_exception_flags |= float_flag_divbyzero;
+        float_raise(float_flag_divbyzero, s);
         return float32_set_sign(float32_infinity, sign);
     }
 
@@ -4186,7 +4228,7 @@ static float64 frsqrt7_d(float64 f, float_status *s)
         (float64_is_infinity(f) && sign) ||
         (float64_is_normal(f) && sign) ||
         (float64_is_zero_or_denormal(f) && !float64_is_zero(f) && sign)) {
-        s->float_exception_flags |= float_flag_invalid;
+        float_raise(float_flag_invalid, s);
         return float64_default_nan(s);
     }
 
@@ -4197,7 +4239,7 @@ static float64 frsqrt7_d(float64 f, float_status *s)
 
     /* frsqrt7(+-0) = +-inf */
     if (float64_is_zero(f)) {
-        s->float_exception_flags |= float_flag_divbyzero;
+        float_raise(float_flag_divbyzero, s);
         return float64_set_sign(float64_infinity, sign);
     }
 
@@ -4267,12 +4309,11 @@ static uint64_t frec7(uint64_t f, int exp_size, int frac_size,
              * Overflow to inf or max value of same sign,
              * depending on sign and rounding mode.
              */
-            s->float_exception_flags |= (float_flag_inexact |
-                                         float_flag_overflow);
+            float_raise(float_flag_inexact | float_flag_overflow, s);
 
-            if ((s->float_rounding_mode == float_round_to_zero) ||
-                ((s->float_rounding_mode == float_round_down) && !sign) ||
-                ((s->float_rounding_mode == float_round_up) && sign)) {
+            if ((get_float_rounding_mode(s) == float_round_to_zero) ||
+                ((get_float_rounding_mode(s) == float_round_down) && !sign) ||
+                ((get_float_rounding_mode(s) == float_round_up) && sign)) {
                 /* Return greatest/negative finite value. */
                 return (sign << (exp_size + frac_size)) |
                        (MAKE_64BIT_MASK(frac_size, exp_size) - 1);
@@ -4320,13 +4361,13 @@ static bfloat16 frec7_h_bf16(bfloat16 f, float_status *s)
 
     /* frec7(+-0) = +-inf */
     if (bfloat16_is_zero(f)) {
-        s->float_exception_flags |= float_flag_divbyzero;
+        float_raise(float_flag_divbyzero, s);
         return bfloat16_set_sign(bfloat16_infinity, sign);
     }
 
     /* frec7(sNaN) = canonical NaN */
     if (bfloat16_is_signaling_nan(f, s)) {
-        s->float_exception_flags |= float_flag_invalid;
+        float_raise(float_flag_invalid, s);
         return bfloat16_default_nan(s);
     }
 
@@ -4352,13 +4393,13 @@ static float16 frec7_h(float16 f, float_status *s)
 
     /* frec7(+-0) = +-inf */
     if (float16_is_zero(f)) {
-        s->float_exception_flags |= float_flag_divbyzero;
+        float_raise(float_flag_divbyzero, s);
         return float16_set_sign(float16_infinity, sign);
     }
 
     /* frec7(sNaN) = canonical NaN */
     if (float16_is_signaling_nan(f, s)) {
-        s->float_exception_flags |= float_flag_invalid;
+        float_raise(float_flag_invalid, s);
         return float16_default_nan(s);
     }
 
@@ -4384,13 +4425,13 @@ static float32 frec7_s(float32 f, float_status *s)
 
     /* frec7(+-0) = +-inf */
     if (float32_is_zero(f)) {
-        s->float_exception_flags |= float_flag_divbyzero;
+        float_raise(float_flag_divbyzero, s);
         return float32_set_sign(float32_infinity, sign);
     }
 
     /* frec7(sNaN) = canonical NaN */
     if (float32_is_signaling_nan(f, s)) {
-        s->float_exception_flags |= float_flag_invalid;
+        float_raise(float_flag_invalid, s);
         return float32_default_nan(s);
     }
 
@@ -4416,13 +4457,13 @@ static float64 frec7_d(float64 f, float_status *s)
 
     /* frec7(+-0) = +-inf */
     if (float64_is_zero(f)) {
-        s->float_exception_flags |= float_flag_divbyzero;
+        float_raise(float_flag_divbyzero, s);
         return float64_set_sign(float64_infinity, sign);
     }
 
     /* frec7(sNaN) = canonical NaN */
     if (float64_is_signaling_nan(f, s)) {
-        s->float_exception_flags |= float_flag_invalid;
+        float_raise(float_flag_invalid, s);
         return float64_default_nan(s);
     }
 
@@ -4576,6 +4617,8 @@ void HELPER(NAME)(void *vd, void *v0, void *vs1, void *vs2,   \
     uint32_t vta_all_1s = vext_vta_all_1s(desc);              \
     uint32_t vma = vext_vma(desc);                            \
     uint32_t i;                                               \
+    FloatExceptionFlags pre_fflag =                           \
+        get_float_exception_flags(&env->fp_status);           \
                                                               \
     VSTART_CHECK_EARLY_EXIT(env, vl);                         \
                                                               \
@@ -4602,6 +4645,7 @@ void HELPER(NAME)(void *vd, void *v0, void *vs1, void *vs2,   \
             vext_set_elem_mask(vd, i, 1);                     \
         }                                                     \
     }                                                         \
+    riscv_cpu_check_fflags(env, pre_fflag);                   \
 }
 
 GEN_VEXT_CMP_VV_ENV(vmfeq_vv_h_bf16, uint16_t, H2, bfloat16_eq_quiet)
@@ -4619,6 +4663,8 @@ void HELPER(NAME)(void *vd, void *v0, uint64_t s1, void *vs2,       \
     uint32_t vta_all_1s = vext_vta_all_1s(desc);                    \
     uint32_t vma = vext_vma(desc);                                  \
     uint32_t i;                                                     \
+    FloatExceptionFlags pre_fflag =                                 \
+        get_float_exception_flags(&env->fp_status);                 \
                                                                     \
     VSTART_CHECK_EARLY_EXIT(env, vl);                               \
                                                                     \
@@ -4644,6 +4690,7 @@ void HELPER(NAME)(void *vd, void *v0, uint64_t s1, void *vs2,       \
             vext_set_elem_mask(vd, i, 1);                           \
         }                                                           \
     }                                                               \
+    riscv_cpu_check_fflags(env, pre_fflag);                         \
 }
 
 GEN_VEXT_CMP_VF(vmfeq_vf_h_bf16, uint16_t, H2, bfloat16_eq_quiet)
@@ -5117,34 +5164,36 @@ GEN_VEXT_RED(vwredsumu_vs_h, uint32_t, uint16_t, H4, H2, DO_ADD)
 GEN_VEXT_RED(vwredsumu_vs_w, uint64_t, uint32_t, H8, H4, DO_ADD)
 
 /* Vector Single-Width Floating-Point Reduction Instructions */
-#define GEN_VEXT_FRED(NAME, TD, TS2, HD, HS2, OP)          \
-void HELPER(NAME)(void *vd, void *v0, void *vs1,           \
-                  void *vs2, CPURISCVState *env,           \
-                  uint32_t desc)                           \
-{                                                          \
-    uint32_t vm = vext_vm(desc);                           \
-    uint32_t vl = env->vl;                                 \
-    uint32_t esz = sizeof(TD);                             \
-    uint32_t vlenb = simd_maxsz(desc);                     \
-    uint32_t vta = vext_vta(desc);                         \
-    uint32_t i;                                            \
-    TD s1 =  *((TD *)vs1 + HD(0));                         \
-                                                           \
-    VSTART_CHECK_EARLY_EXIT(env, vl);                      \
-                                                           \
-    for (i = env->vstart; i < vl; i++) {                   \
-        TS2 s2 = *((TS2 *)vs2 + HS2(i));                   \
-        if (!vm && !vext_elem_mask(v0, i)) {               \
-            continue;                                      \
-        }                                                  \
-        s1 = OP(s1, (TD)s2, &env->fp_status);              \
-    }                                                      \
-    if (vl > 0) {                                          \
-        *((TD *)vd + HD(0)) = s1;                          \
-    }                                                      \
-    env->vstart = 0;                                       \
-    /* set tail elements to 1s */                          \
-    vext_set_elems_1s(vd, vta, esz, vlenb);                \
+#define GEN_VEXT_FRED(NAME, TD, TS2, HD, HS2, OP)            \
+void HELPER(NAME)(void *vd, void *v0, void *vs1, void *vs2,  \
+                  CPURISCVState *env, uint32_t desc)         \
+{                                                            \
+    uint32_t vm = vext_vm(desc);                             \
+    uint32_t vl = env->vl;                                   \
+    uint32_t esz = sizeof(TD);                               \
+    uint32_t vlenb = simd_maxsz(desc);                       \
+    uint32_t vta = vext_vta(desc);                           \
+    uint32_t i;                                              \
+    FloatExceptionFlags pre_fflag =                          \
+        get_float_exception_flags(&env->fp_status);          \
+    TD s1 =  *((TD *)vs1 + HD(0));                           \
+                                                             \
+    VSTART_CHECK_EARLY_EXIT(env, vl);                        \
+                                                             \
+    for (i = env->vstart; i < vl; i++) {                     \
+        TS2 s2 = *((TS2 *)vs2 + HS2(i));                     \
+        if (!vm && !vext_elem_mask(v0, i)) {                 \
+            continue;                                        \
+        }                                                    \
+        s1 = OP(s1, (TD)s2, &env->fp_status);                \
+    }                                                        \
+    if (vl > 0) {                                            \
+        *((TD *)vd + HD(0)) = s1;                            \
+    }                                                        \
+    env->vstart = 0;                                         \
+    /* set tail elements to 1s */                            \
+    vext_set_elems_1s(vd, vta, esz, vlenb);                  \
+    riscv_cpu_check_fflags(env, pre_fflag);                  \
 }
 
 /* Unordered sum */

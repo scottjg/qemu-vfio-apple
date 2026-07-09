@@ -3,8 +3,8 @@
 
 #include "qemu/bswap.h"
 #include "cpu-qom.h"
-#include "exec/cpu-defs.h"
 #include "exec/cpu-interrupt.h"
+#include "exec/target_long.h"
 #include "qemu/cpu-float.h"
 
 #if !defined(TARGET_SPARC64)
@@ -580,7 +580,7 @@ struct SPARCCPUClass {
 #ifndef CONFIG_USER_ONLY
 extern const VMStateDescription vmstate_sparc_cpu;
 
-hwaddr sparc_cpu_get_phys_page_debug(CPUState *cpu, vaddr addr);
+hwaddr sparc_cpu_get_phys_addr_debug(CPUState *cpu, vaddr addr);
 #endif
 
 void sparc_cpu_do_interrupt(CPUState *cpu);

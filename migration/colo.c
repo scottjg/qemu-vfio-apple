@@ -409,6 +409,7 @@ static int colo_do_checkpoint_transaction(MigrationState *s,
                                           QEMUFile *fb)
 {
     Error *local_err = NULL;
+    MigPendingData pending = {};
     int ret = -1;
 
     colo_send_message(s->to_dst_file, COLO_MESSAGE_CHECKPOINT_REQUEST,
@@ -465,6 +466,19 @@ static int colo_do_checkpoint_transaction(MigrationState *s,
     if (migrate_auto_converge()) {
         mig_throttle_counter_reset();
     }
+
+    /*
+     * Run the final pending query so migration modules can flush their dirty
+     * state (e.g., RAM syncs its dirty bitmap) before this checkpoint's live
+     * state is saved. Unlike a regular switchover, COLO reaches completion
+     * repeatedly for every checkpoint, so this must be done on each one.
+     */
+    if (!qemu_savevm_query_pending_final(s, &pending, &local_err)) {
+        ret = -1;
+        bql_unlock();
+        goto out;
+    }
+
     /*
      * Only save VM's live state, which not including device state.
      * TODO: We may need a timeout mechanism to prevent COLO process

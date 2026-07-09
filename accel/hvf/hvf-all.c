@@ -10,6 +10,8 @@
 
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
+#include "qapi/error.h"
+#include "qapi/qapi-visit-common.h"
 #include "accel/accel-ops.h"
 #include "exec/cpu-common.h"
 #include "system/address-spaces.h"
@@ -21,9 +23,17 @@
 #include "trace.h"
 
 bool hvf_allowed;
+bool hvf_kernel_irqchip;
+bool hvf_nested_virt;
+static bool hvf_kernel_irqchip_override;
 #ifdef __aarch64__
 bool hvf_tso_mode;
 #endif
+
+void hvf_nested_virt_enable(bool nested_virt)
+{
+    hvf_nested_virt = nested_virt;
+}
 
 const char *hvf_return_string(hv_return_t ret)
 {
@@ -206,6 +216,13 @@ static int hvf_accel_init(AccelState *as, MachineState *ms)
         }
     }
 
+    if (mc->get_kernel_irqchip_default) {
+        bool kernel_irqchip_default = mc->get_kernel_irqchip_default(ms);
+        if (!hvf_kernel_irqchip_override) {
+            hvf_kernel_irqchip = kernel_irqchip_default;
+        }
+    }
+
     ret = hvf_arch_vm_create(ms, (uint32_t)pa_range);
     if (ret == HV_DENIED) {
         error_report("Could not access HVF. Is the executable signed"
@@ -213,6 +230,8 @@ static int hvf_accel_init(AccelState *as, MachineState *ms)
         exit(1);
     }
     assert_hvf_ok(ret);
+
+    as->gdbstub.sstep_flags = SSTEP_ENABLE | SSTEP_NOIRQ;
 
     QTAILQ_INIT(&s->hvf_sw_breakpoints);
 
@@ -222,9 +241,43 @@ static int hvf_accel_init(AccelState *as, MachineState *ms)
     return hvf_arch_init();
 }
 
-static int hvf_gdbstub_sstep_flags(AccelState *as)
+static void hvf_set_kernel_irqchip(Object *obj, Visitor *v,
+                                   const char *name, void *opaque,
+                                   Error **errp)
 {
-    return SSTEP_ENABLE | SSTEP_NOIRQ;
+    OnOffSplit mode;
+
+    hvf_kernel_irqchip_override = true;
+    if (!visit_type_OnOffSplit(v, name, &mode, errp)) {
+        return;
+    }
+
+    switch (mode) {
+    case ON_OFF_SPLIT_ON:
+#ifdef HOST_X86_64
+        /* macOS 12 onwards exposes an HVF virtual APIC. */
+        error_setg(errp, "HVF: kernel irqchip is not currently implemented for x86.");
+        break;
+#else
+        hvf_kernel_irqchip = true;
+        break;
+#endif
+
+    case ON_OFF_SPLIT_OFF:
+        hvf_kernel_irqchip = false;
+        break;
+
+    case ON_OFF_SPLIT_SPLIT:
+        error_setg(errp, "HVF: split irqchip is not supported on HVF.");
+        break;
+
+    default:
+        /*
+         * The value was checked in visit_type_OnOffSplit() above. If
+         * we get here, then something is wrong in QEMU.
+         */
+        abort();
+    }
 }
 
 #ifdef __aarch64__
@@ -245,20 +298,27 @@ static void hvf_accel_class_init(ObjectClass *oc, const void *data)
     ac->name = "HVF";
     ac->init_machine = hvf_accel_init;
     ac->allowed = &hvf_allowed;
-    ac->gdbstub_supported_sstep_flags = hvf_gdbstub_sstep_flags;
+
+    hvf_kernel_irqchip_override = false;
+    hvf_kernel_irqchip = false;
+    object_class_property_add(oc, "kernel-irqchip", "on|off|split",
+        NULL, hvf_set_kernel_irqchip,
+        NULL, NULL);
+    object_class_property_set_description(oc, "kernel-irqchip",
+        "Configure HVF irqchip");
 
 #ifdef __aarch64__
-    /*
-     * -accel hvf,tso=on: enable Apple TSO (total store ordering) mode
-     * for every vCPU at init time. Required by FEX-Emu and other x86
-     * userspace emulators on Apple silicon. Only meaningful on aarch64
-     * Apple silicon hosts running macOS 15.0 or newer.
-     */
-    object_class_property_add_bool(oc, "tso",
-                                   hvf_get_tso, hvf_set_tso);
-    object_class_property_set_description(oc, "tso",
-        "Enable Apple total-store-ordering memory model on all vCPUs");
-#endif
+        /*
+         * -accel hvf,tso=on: enable Apple TSO (total store ordering) mode
+         * for every vCPU at init time. Required by FEX-Emu and other x86
+         * userspace emulators on Apple silicon. Only meaningful on aarch64
+         * Apple silicon hosts running macOS 15.0 or newer.
+         */
+        object_class_property_add_bool(oc, "tso",
+                                       hvf_get_tso, hvf_set_tso);
+        object_class_property_set_description(oc, "tso",
+            "Enable Apple total-store-ordering memory model on all vCPUs");
+#endif    
 }
 
 static const TypeInfo hvf_accel_type = {

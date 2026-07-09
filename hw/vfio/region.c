@@ -517,7 +517,7 @@ int vfio_region_mmap(VFIORegion *region)
     return vbasedev->io_ops->region_map(vbasedev, region);
 }
 
-void vfio_region_unmap(VFIORegion *region)
+static void vfio_region_unmap(VFIORegion *region)
 {
     VFIODevice *vbasedev;
 
@@ -549,8 +549,6 @@ void vfio_region_finalize(VFIORegion *region)
     if (!region->mem) {
         return;
     }
-
-    vfio_region_unmap(region);
 
     g_free(region->mem);
     g_free(region->mmaps);

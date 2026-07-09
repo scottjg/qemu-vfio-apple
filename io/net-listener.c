@@ -38,7 +38,6 @@ QIONetListener *qio_net_listener_new(void)
     QIONetListener *listener;
 
     listener = QIO_NET_LISTENER(object_new(TYPE_QIO_NET_LISTENER));
-    qemu_mutex_init(&listener->lock);
     return listener;
 }
 
@@ -440,6 +439,13 @@ qio_net_listener_get_local_address(QIONetListener *listener, size_t n,
     return qio_channel_socket_get_local_address(sioc, errp);
 }
 
+static void qio_net_listener_instance_init(Object *obj)
+{
+    QIONetListener *listener = QIO_NET_LISTENER(obj);
+
+    qemu_mutex_init(&listener->lock);
+}
+
 static void qio_net_listener_finalize(Object *obj)
 {
     QIONetListener *listener = QIO_NET_LISTENER(obj);
@@ -463,6 +469,7 @@ static const TypeInfo qio_net_listener_info = {
     .parent = TYPE_OBJECT,
     .name = TYPE_QIO_NET_LISTENER,
     .instance_size = sizeof(QIONetListener),
+    .instance_init = qio_net_listener_instance_init,
     .instance_finalize = qio_net_listener_finalize,
 };
 

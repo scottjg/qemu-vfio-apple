@@ -1188,6 +1188,65 @@
             '*node-affinity': ['uint16'] } }
 
 ##
+# @MonitorProperties:
+#
+# Properties for all monitors
+#
+# @chardev: ID of the character device providing the monitor transport
+#
+# Since: 11.1
+##
+{ 'struct': 'MonitorProperties',
+  'data': { 'chardev': 'str' }}
+
+##
+# @MonitorHMPProperties:
+#
+# Properties for the HMP monitor
+#
+# @readline: whether to enable readline for line editing
+#      (default: true)
+#
+# Since: 11.1
+##
+{ 'struct': 'MonitorHMPProperties',
+  'base': 'MonitorProperties',
+  'data': { '*readline': 'bool' } }
+
+
+##
+# @MonitorQMPCloseAction:
+#
+# Action to take when the character device backend is closed.
+#
+# @none: take no action
+#
+# @delete: delete both the 'monitor-qmp' object and its associated
+#     character device backend object
+#
+# Since: 11.1
+##
+{ 'enum': 'MonitorQMPCloseAction',
+  'data': ['none', 'delete'] }
+
+##
+# @MonitorQMPProperties:
+#
+# Properties for the QMP monitor
+#
+# @pretty: whether to pretty print JSON responses (default: false)
+#
+# @close-action: action to take when the character device backend is
+#     closed (default: none)
+#
+# Since: 11.1
+##
+{ 'struct': 'MonitorQMPProperties',
+  'base': 'MonitorProperties',
+  'data': { '*pretty': 'bool',
+            '*close-action': 'MonitorQMPCloseAction' } }
+
+##
 # @ObjectType:
 #
 # Features:
@@ -1237,6 +1296,8 @@
     'memory-backend-ram',
     { 'name': 'memory-backend-shm',
       'if': 'CONFIG_POSIX' },
+    'monitor-hmp',
+    'monitor-qmp',
     'pef-guest',
     { 'name': 'pr-manager-helper',
       'if': 'CONFIG_LINUX' },
@@ -1315,6 +1376,8 @@
       'memory-backend-ram':         'MemoryBackendProperties',
       'memory-backend-shm':         { 'type': 'MemoryBackendShmProperties',
                                       'if': 'CONFIG_POSIX' },
+      'monitor-hmp':                'MonitorHMPProperties',
+      'monitor-qmp':                'MonitorQMPProperties',
       'pr-manager-helper':          { 'type': 'PrManagerHelperProperties',
                                       'if': 'CONFIG_LINUX' },
       'qtest':                      'QtestProperties',

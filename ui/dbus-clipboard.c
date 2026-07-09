@@ -80,8 +80,7 @@ dbus_clipboard_update_info(DBusDisplay *dpy, QemuClipboardInfo *info)
     if (req->invocation && info->types[req->type].data) {
         dbus_clipboard_complete_request(dpy, req->invocation, info, req->type);
         g_clear_object(&req->invocation);
-        g_source_remove(req->timeout_id);
-        req->timeout_id = 0;
+        g_clear_handle_id(&req->timeout_id, g_source_remove);
         return;
     }
 
@@ -183,8 +182,7 @@ dbus_clipboard_request_cancelled(DBusClipboardRequest *req)
         "Cancelled clipboard request");
 
     g_clear_object(&req->invocation);
-    g_source_remove(req->timeout_id);
-    req->timeout_id = 0;
+    g_clear_handle_id(&req->timeout_id, g_source_remove);
 }
 
 static void

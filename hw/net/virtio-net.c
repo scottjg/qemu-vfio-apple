@@ -1374,6 +1374,11 @@ static void virtio_net_unload_ebpf(VirtIONet *n)
     ebpf_rss_unload(&n->ebpf_rss);
 }
 
+static bool virtio_net_rss_indirections_len_valid(uint16_t len)
+{
+    return is_power_of_2(len) && len <= VIRTIO_NET_RSS_MAX_TABLE_LEN;
+}
+
 static uint16_t virtio_net_handle_rss(VirtIONet *n,
                                       struct iovec *iov,
                                       unsigned int iov_cnt,
@@ -1411,14 +1416,9 @@ static uint16_t virtio_net_handle_rss(VirtIONet *n,
     if (!do_rss) {
         n->rss_data.indirections_len = 0;
     }
-    if (n->rss_data.indirections_len >= VIRTIO_NET_RSS_MAX_TABLE_LEN) {
-        err_msg = "Too large indirection table";
-        err_value = n->rss_data.indirections_len;
-        goto error;
-    }
     n->rss_data.indirections_len++;
-    if (!is_power_of_2(n->rss_data.indirections_len)) {
-        err_msg = "Invalid size of indirection table";
+    if (!virtio_net_rss_indirections_len_valid(n->rss_data.indirections_len)) {
+        err_msg = "Invalid indirection table length";
         err_value = n->rss_data.indirections_len;
         goto error;
     }
@@ -3425,6 +3425,13 @@ static int virtio_net_rss_post_load(void *opaque, int version_id)
 
     if (version_id == 1) {
         n->rss_data.supported_hash_types = VIRTIO_NET_RSS_SUPPORTED_HASHES;
+    }
+
+    if (!virtio_net_rss_indirections_len_valid(n->rss_data.indirections_len)) {
+        error_report("virtio-net: saved image has invalid RSS "
+                     "indirections_len: %u",
+                     n->rss_data.indirections_len);
+        return -EINVAL;
     }
 
     return 0;

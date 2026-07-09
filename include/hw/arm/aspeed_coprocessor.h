@@ -48,6 +48,8 @@ struct Aspeed27x0CoprocessorState {
     AspeedINTCState intc[2];
     UnimplementedDeviceState ipc[2];
     UnimplementedDeviceState scuio;
+    UnimplementedDeviceState pric[2];
+    UnimplementedDeviceState otp;
 
     ARMv7MState armv7m;
 };

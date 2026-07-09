@@ -81,6 +81,8 @@ void ich9_pm_init(PCIDevice *lpc_pci, ICH9LPCPMRegs *pm, qemu_irq sci_irq);
 void ich9_pm_iospace_update(ICH9LPCPMRegs *pm, uint32_t pm_io_base);
 extern const VMStateDescription vmstate_ich9_pm;
 
+void ich9_pm_reset_properties(ICH9LPCPMRegs *pm);
+
 void ich9_pm_add_properties(Object *obj, ICH9LPCPMRegs *pm);
 
 void ich9_pm_device_pre_plug_cb(HotplugHandler *hotplug_dev, DeviceState *dev,

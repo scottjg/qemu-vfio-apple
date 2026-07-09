@@ -295,11 +295,6 @@ void whpx_translate_cpu_breakpoints(
     /* Breakpoints aren’t supported on this platform */
 }
 
-bool whpx_arch_supports_guest_debug(void) 
-{
-    return false;
-}
-
 void whpx_arch_destroy_vcpu(CPUState *cpu)
 {
     /* currently empty on Arm */

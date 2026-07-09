@@ -53,6 +53,15 @@ dbus_display_chardev_export(DBusDisplay *dpy, DBusChardev *chr)
     sk = g_dbus_object_skeleton_new(path);
     g_dbus_object_skeleton_add_interface(
         sk, G_DBUS_INTERFACE_SKELETON(chr->iface));
+    if (chr->iface_vc_encoding) {
+        const char *interfaces[] = {
+            "org.qemu.Display1.Chardev.VCEncoding",
+            NULL
+        };
+        g_dbus_object_skeleton_add_interface(
+            sk, G_DBUS_INTERFACE_SKELETON(chr->iface_vc_encoding));
+        g_object_set(chr->iface, "interfaces", interfaces, NULL);
+    }
     g_dbus_object_manager_server_export(dpy->server, sk);
     chr->exported = true;
 }
@@ -290,6 +299,7 @@ char_dbus_finalize(Object *obj)
     };
 
     dbus_display_notify(&event);
+    g_clear_object(&dc->iface_vc_encoding);
     g_clear_object(&dc->iface);
 }
 

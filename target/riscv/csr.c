@@ -21,16 +21,21 @@
 #include "qemu/log.h"
 #include "qemu/timer.h"
 #include "cpu.h"
+#include "target/riscv/csr.h"
 #include "tcg/tcg-cpu.h"
 #include "pmu.h"
 #include "time_helper.h"
 #include "exec/cputlb.h"
 #include "exec/icount.h"
+#include "accel/tcg/cpu-loop.h"
 #include "accel/tcg/getpc.h"
 #include "qemu/guest-random.h"
 #include "qapi/error.h"
 #include "tcg/insn-start-words.h"
 #include "internals.h"
+#if !defined(CONFIG_USER_ONLY)
+#include "target/riscv/debug.h"
+#endif
 
 /* CSR function table public API */
 void riscv_get_csr_ops(int csrno, riscv_csr_operations *ops)
@@ -374,7 +379,7 @@ static RISCVException aia_smode(CPURISCVState *env, int csrno)
 static RISCVException aia_smode32(CPURISCVState *env, int csrno)
 {
     int ret;
-    int csr_priv = get_field(csrno, 0x300);
+    privilege_mode_t csr_priv = get_field(csrno, 0x300);
 
     if (csr_priv == PRV_M && !riscv_cpu_cfg(env)->ext_smaia) {
         return RISCV_EXCP_ILLEGAL_INST;
@@ -395,6 +400,10 @@ static RISCVException scountinhibit_pred(CPURISCVState *env, int csrno)
     RISCVCPU *cpu = env_archcpu(env);
 
     if (!cpu->cfg.ext_ssccfg || !cpu->cfg.ext_smcdeleg) {
+        return RISCV_EXCP_ILLEGAL_INST;
+    }
+
+    if (!get_field(env->menvcfg, MENVCFG_CDE)) {
         return RISCV_EXCP_ILLEGAL_INST;
     }
 
@@ -586,7 +595,7 @@ static RISCVException sstc(CPURISCVState *env, int csrno)
 {
     bool hmode_check = false;
 
-    if (!riscv_cpu_cfg(env)->ext_sstc || !env->rdtime_fn) {
+    if (!riscv_cpu_cfg(env)->ext_sstc) {
         return RISCV_EXCP_ILLEGAL_INST;
     }
 
@@ -601,6 +610,10 @@ static RISCVException sstc(CPURISCVState *env, int csrno)
 
     if (env->debugger) {
         return RISCV_EXCP_NONE;
+    }
+
+    if (!env->rdtime_fn) {
+        return RISCV_EXCP_ILLEGAL_INST;
     }
 
     if (env->priv == PRV_M) {
@@ -783,6 +796,9 @@ static RISCVException have_mseccfg(CPURISCVState *env, int csrno)
     if (riscv_cpu_cfg(env)->ext_smmpm) {
         return RISCV_EXCP_NONE;
     }
+    if (riscv_cpu_cfg(env)->ext_zicfilp) {
+        return RISCV_EXCP_NONE;
+    }
 
     return RISCV_EXCP_ILLEGAL_INST;
 }
@@ -907,6 +923,10 @@ static RISCVException write_frm(CPURISCVState *env, int csrno,
 static RISCVException read_fcsr(CPURISCVState *env, int csrno,
                                 target_ulong *val)
 {
+    /*
+     * This is an 8-bit operation, fflags make up the lower 5 bits and
+     * frm the upper 3 bits of fcsr.
+     */
     *val = (riscv_cpu_get_fflags(env) << FSR_AEXC_SHIFT)
         | (env->frm << FSR_RD_SHIFT);
     return RISCV_EXCP_NONE;
@@ -929,7 +949,16 @@ static RISCVException read_vtype(CPURISCVState *env, int csrno,
                                  target_ulong *val)
 {
     uint64_t vill;
-    switch (env->xl) {
+    int xl = env->xl;
+    /*
+     * TCG plugins can read registers before env->xl is initialized.
+     * Fall back to the CPU's maximum XLEN in that early-init case.
+     */
+    if (xl == 0) {
+        xl = riscv_cpu_mxl(env);
+    }
+
+    switch (xl) {
     case MXL_RV32:
         vill = (uint32_t)env->vill << 31;
         break;
@@ -970,7 +999,7 @@ static RISCVException write_vxrm(CPURISCVState *env, int csrno,
 #if !defined(CONFIG_USER_ONLY)
     env->mstatus |= MSTATUS_VS;
 #endif
-    env->vxrm = val;
+    env->vxrm = val & (VCSR_VXRM >> VCSR_VXRM_SHIFT);
     return RISCV_EXCP_NONE;
 }
 
@@ -1402,8 +1431,9 @@ RISCVException riscv_pmu_read_ctr(CPURISCVState *env, target_ulong *val,
      */
     if (riscv_pmu_ctr_monitor_cycles(env, ctr_idx) ||
         riscv_pmu_ctr_monitor_instructions(env, ctr_idx)) {
-        *val = riscv_pmu_ctr_get_fixed_counters_val(env, ctr_idx) -
-                                                    ctr_prev + ctr_val;
+        uint64_t cntr = riscv_pmu_ctr_get_fixed_counters_val(env, ctr_idx) -
+                                                             ctr_prev + ctr_val;
+        *val = extract64(cntr, start, length);
     } else {
         *val = ctr_val;
     }
@@ -1774,13 +1804,13 @@ static RISCVException write_stimecmph(CPURISCVState *env, int csrno,
 #define VSTOPI_NUM_SRCS 5
 
 /*
- * All core local interrupts except the fixed ones 0:12. This macro is for
+ * All core local interrupts except the fixed ones 0:15. This macro is for
  * virtual interrupts logic so please don't change this to avoid messing up
  * the whole support, For reference see AIA spec: `5.3 Interrupt filtering and
  * virtual interrupts for supervisor level` and `6.3.2 Virtual interrupts for
  * VS level`.
  */
-#define LOCAL_INTERRUPTS   (~0x1FFFULL)
+#define LOCAL_INTERRUPTS   (~0xFFFFULL)
 
 static const uint64_t delegable_ints =
     S_MODE_INTERRUPTS | VS_MODE_INTERRUPTS | MIP_LCOFIP;
@@ -1799,7 +1829,6 @@ static const uint64_t all_ints = M_MODE_INTERRUPTS | S_MODE_INTERRUPTS |
                          (1ULL << (RISCV_EXCP_U_ECALL)) | \
                          (1ULL << (RISCV_EXCP_S_ECALL)) | \
                          (1ULL << (RISCV_EXCP_VS_ECALL)) | \
-                         (1ULL << (RISCV_EXCP_M_ECALL)) | \
                          (1ULL << (RISCV_EXCP_INST_PAGE_FAULT)) | \
                          (1ULL << (RISCV_EXCP_LOAD_PAGE_FAULT)) | \
                          (1ULL << (RISCV_EXCP_STORE_PAGE_FAULT)) | \
@@ -1992,6 +2021,20 @@ static target_ulong legalize_mpp(CPURISCVState *env, target_ulong old_mpp,
     return val;
 }
 
+static uint64_t riscv_write_uxl(CPURISCVState *env, uint64_t val,
+                                uint64_t field)
+{
+    RISCVMXL xl = riscv_cpu_mxl(env);
+    uint64_t uxl = get_field(val, field);
+
+    if (uxl == MXL_RV128) {
+        uxl = xl == MXL_RV128 ? MXL_RV64 : xl;
+        val = set_field(val, field, uxl);
+    }
+
+    return val;
+}
+
 static RISCVException write_mstatus(CPURISCVState *env, int csrno,
                                     target_ulong val, uintptr_t ra)
 {
@@ -2037,11 +2080,9 @@ static RISCVException write_mstatus(CPURISCVState *env, int csrno,
     }
 
     if (xl != MXL_RV32 || env->debugger) {
-        if (riscv_has_ext(env, RVH)) {
-            mask |= MSTATUS_MPV | MSTATUS_GVA;
-        }
         if ((val & MSTATUS64_UXL) != 0) {
             mask |= MSTATUS64_UXL;
+            val = riscv_write_uxl(env, val, MSTATUS64_UXL);
         }
     }
 
@@ -2076,7 +2117,7 @@ static RISCVException write_mstatush(CPURISCVState *env, int csrno,
                                      target_ulong val, uintptr_t ra)
 {
     uint64_t valh = (uint64_t)val << 32;
-    uint64_t mask = riscv_has_ext(env, RVH) ? MSTATUS_MPV | MSTATUS_GVA : 0;
+    uint64_t mask = 0;
 
     if (riscv_cpu_cfg(env)->ext_smdbltrp) {
         mask |= MSTATUS_MDT;
@@ -2418,7 +2459,7 @@ static RISCVException rmw_xiselect(CPURISCVState *env, int csrno,
                                    target_ulong *val, target_ulong new_val,
                                    target_ulong wr_mask)
 {
-    target_ulong *iselect;
+    uint16_t *iselect;
     int ret;
 
     ret = smstateen_acc_ok(env, 0, SMSTATEEN0_SVSLCT);
@@ -2461,18 +2502,18 @@ static RISCVException rmw_xiselect(CPURISCVState *env, int csrno,
     return RISCV_EXCP_NONE;
 }
 
-static bool xiselect_aia_range(target_ulong isel)
+static bool xiselect_aia_range(uint16_t isel)
 {
     return (ISELECT_IPRIO0 <= isel && isel <= ISELECT_IPRIO15) ||
            (ISELECT_IMSIC_FIRST <= isel && isel <= ISELECT_IMSIC_LAST);
 }
 
-static bool xiselect_cd_range(target_ulong isel)
+static bool xiselect_cd_range(uint16_t isel)
 {
     return (ISELECT_CD_FIRST <= isel && isel <= ISELECT_CD_LAST);
 }
 
-static bool xiselect_ctr_range(int csrno, target_ulong isel)
+static bool xiselect_ctr_range(int csrno, uint16_t isel)
 {
     /* MIREG-MIREG6 for the range 0x200-0x2ff are not used by CTR. */
     return CTR_ENTRIES_FIRST <= isel && isel <= CTR_ENTRIES_LAST &&
@@ -2480,7 +2521,7 @@ static bool xiselect_ctr_range(int csrno, target_ulong isel)
 }
 
 static int rmw_iprio(target_ulong xlen,
-                     target_ulong iselect, uint8_t *iprio,
+                     uint16_t iselect, uint8_t *iprio,
                      target_ulong *val, target_ulong new_val,
                      target_ulong wr_mask, int ext_irq_no)
 {
@@ -2524,7 +2565,7 @@ static int rmw_iprio(target_ulong xlen,
     return 0;
 }
 
-static int rmw_ctrsource(CPURISCVState *env, int isel, target_ulong *val,
+static int rmw_ctrsource(CPURISCVState *env, uint16_t isel, target_ulong *val,
                           target_ulong new_val, target_ulong wr_mask)
 {
     /*
@@ -2563,7 +2604,7 @@ static int rmw_ctrsource(CPURISCVState *env, int isel, target_ulong *val,
     return 0;
 }
 
-static int rmw_ctrtarget(CPURISCVState *env, int isel, target_ulong *val,
+static int rmw_ctrtarget(CPURISCVState *env, uint16_t isel, target_ulong *val,
                           target_ulong new_val, target_ulong wr_mask)
 {
     /*
@@ -2602,7 +2643,7 @@ static int rmw_ctrtarget(CPURISCVState *env, int isel, target_ulong *val,
     return 0;
 }
 
-static int rmw_ctrdata(CPURISCVState *env, int isel, target_ulong *val,
+static int rmw_ctrdata(CPURISCVState *env, uint16_t isel, target_ulong *val,
                         target_ulong new_val, target_ulong wr_mask)
 {
     /*
@@ -2643,13 +2684,15 @@ static int rmw_ctrdata(CPURISCVState *env, int isel, target_ulong *val,
 }
 
 static RISCVException rmw_xireg_aia(CPURISCVState *env, int csrno,
-                         target_ulong isel, target_ulong *val,
+                         uint16_t isel, target_ulong *val,
                          target_ulong new_val, target_ulong wr_mask)
 {
     bool virt = false, isel_reserved = false;
     int ret = -EINVAL;
     uint8_t *iprio;
-    target_ulong priv, vgein;
+    privilege_mode_t priv;
+    uint32_t vgein;
+    uint64_t wide_val;
 
     /* VS-mode CSR number passed in has already been translated */
     switch (csrno) {
@@ -2694,16 +2737,19 @@ static RISCVException rmw_xireg_aia(CPURISCVState *env, int csrno,
         }
     } else if (ISELECT_IMSIC_FIRST <= isel && isel <= ISELECT_IMSIC_LAST) {
         /* IMSIC registers only available when machine implements it. */
-        if (env->aia_ireg_rmw_fn[priv]) {
+        if (env->aia_ireg_rmw_cb[priv]) {
             /* Selected guest interrupt file should not be zero */
             if (virt && (!vgein || env->geilen < vgein)) {
                 goto done;
             }
             /* Call machine specific IMSIC register emulation */
-            ret = env->aia_ireg_rmw_fn[priv](env->aia_ireg_rmw_fn_arg[priv],
+            ret = env->aia_ireg_rmw_cb[priv](env->aia_ireg_rmw_cb_arg[priv],
                                     AIA_MAKE_IREG(isel, priv, virt, vgein,
                                                   riscv_cpu_mxl_bits(env)),
-                                    val, new_val, wr_mask);
+                                    &wide_val, new_val, wr_mask);
+            if (val) {
+                *val = wide_val;
+            }
         }
     } else {
         isel_reserved = true;
@@ -2723,12 +2769,12 @@ done:
 }
 
 static int rmw_xireg_cd(CPURISCVState *env, int csrno,
-                        target_ulong isel, target_ulong *val,
+                        uint16_t isel, target_ulong *val,
                         target_ulong new_val, target_ulong wr_mask)
 {
     int ret = -EINVAL;
-    int ctr_index = isel - ISELECT_CD_FIRST;
-    int isel_hpm_start = ISELECT_CD_FIRST + 3;
+    uint16_t ctr_index = isel - ISELECT_CD_FIRST;
+    uint16_t isel_hpm_start = ISELECT_CD_FIRST + 3;
 
     if (!riscv_cpu_cfg(env)->ext_smcdeleg || !riscv_cpu_cfg(env)->ext_ssccfg) {
         ret = RISCV_EXCP_ILLEGAL_INST;
@@ -2795,7 +2841,7 @@ done:
 }
 
 static int rmw_xireg_ctr(CPURISCVState *env, int csrno,
-                        target_ulong isel, target_ulong *val,
+                        uint16_t isel, target_ulong *val,
                         target_ulong new_val, target_ulong wr_mask)
 {
     if (!riscv_cpu_cfg(env)->ext_smctr && !riscv_cpu_cfg(env)->ext_ssctr) {
@@ -2823,7 +2869,7 @@ static int rmw_xireg_ctr(CPURISCVState *env, int csrno,
  * extension using csrind should be implemented here.
  */
 static int rmw_xireg_csrind(CPURISCVState *env, int csrno,
-                              target_ulong isel, target_ulong *val,
+                              uint16_t isel, target_ulong *val,
                               target_ulong new_val, target_ulong wr_mask)
 {
     bool virt = csrno == CSR_VSIREG ? true : false;
@@ -2853,7 +2899,7 @@ static int rmw_xiregi(CPURISCVState *env, int csrno, target_ulong *val,
                       target_ulong new_val, target_ulong wr_mask)
 {
     int ret = -EINVAL;
-    target_ulong isel;
+    uint16_t isel;
 
     ret = smstateen_acc_ok(env, 0, SMSTATEEN0_SVSLCT);
     if (ret != RISCV_EXCP_NONE) {
@@ -2884,7 +2930,7 @@ static RISCVException rmw_xireg(CPURISCVState *env, int csrno,
                                 target_ulong wr_mask)
 {
     int ret = -EINVAL;
-    target_ulong isel;
+    uint16_t isel;
 
     ret = smstateen_acc_ok(env, 0, SMSTATEEN0_SVSLCT);
     if (ret != RISCV_EXCP_NONE) {
@@ -2934,7 +2980,9 @@ static RISCVException rmw_xtopei(CPURISCVState *env, int csrno,
 {
     bool virt;
     int ret = -EINVAL;
-    target_ulong priv, vgein;
+    privilege_mode_t priv;
+    uint32_t vgein;
+    uint64_t wide_val;
 
     /* Translate CSR number for VS-mode */
     csrno = aia_xlate_vs_csrno(env, csrno);
@@ -2960,7 +3008,7 @@ static RISCVException rmw_xtopei(CPURISCVState *env, int csrno,
     };
 
     /* IMSIC CSRs only available when machine implements IMSIC. */
-    if (!env->aia_ireg_rmw_fn[priv]) {
+    if (!env->aia_ireg_rmw_cb[priv]) {
         goto done;
     }
 
@@ -2973,10 +3021,13 @@ static RISCVException rmw_xtopei(CPURISCVState *env, int csrno,
     }
 
     /* Call machine specific IMSIC register emulation for TOPEI */
-    ret = env->aia_ireg_rmw_fn[priv](env->aia_ireg_rmw_fn_arg[priv],
+    ret = env->aia_ireg_rmw_cb[priv](env->aia_ireg_rmw_cb_arg[priv],
                     AIA_MAKE_IREG(ISELECT_IMSIC_TOPEI, priv, virt, vgein,
                                   riscv_cpu_mxl_bits(env)),
-                    val, new_val, wr_mask);
+                    &wide_val, new_val, wr_mask);
+    if (val) {
+        *val = wide_val;
+    }
 
 done:
     if (ret) {
@@ -3175,7 +3226,7 @@ static RISCVException write_menvcfg(CPURISCVState *env, int csrno,
 {
     const RISCVCPUConfig *cfg = riscv_cpu_cfg(env);
     uint64_t mask = MENVCFG_FIOM | MENVCFG_CBIE | MENVCFG_CBCFE |
-                    MENVCFG_CBZE | MENVCFG_CDE;
+                    MENVCFG_CBZE;
     bool stce_changed = false;
 
     if (riscv_cpu_mxl(env) == MXL_RV64) {
@@ -3762,7 +3813,7 @@ static RISCVException rmw_mip64(CPURISCVState *env, int csrno,
 
     if (csrno != CSR_HVIP) {
         gin = get_field(env->hstatus, HSTATUS_VGEIN);
-        old_mip |= (env->hgeip & ((target_ulong)1 << gin)) ? MIP_VSEIP : 0;
+        old_mip |= (env->hgeip & (1ULL << gin)) ? MIP_VSEIP : 0;
         old_mip |= env->vstime_irq ? MIP_VSTIP : 0;
     }
 
@@ -4480,7 +4531,7 @@ static RISCVException read_vstopi(CPURISCVState *env, int csrno,
                                   target_ulong *val)
 {
     int irq, ret;
-    target_ulong topei;
+    uint64_t topei = 0;
     uint64_t vseip, vsgein;
     uint32_t iid, iprio, hviid, hviprio, gein;
     uint32_t s, scount = 0, siid[VSTOPI_NUM_SRCS], siprio[VSTOPI_NUM_SRCS];
@@ -4495,13 +4546,13 @@ static RISCVException read_vstopi(CPURISCVState *env, int csrno,
         if (gein <= env->geilen && vseip) {
             siid[scount] = IRQ_S_EXT;
             siprio[scount] = IPRIO_MMAXIPRIO + 1;
-            if (env->aia_ireg_rmw_fn[PRV_S]) {
+            if (env->aia_ireg_rmw_cb[PRV_S]) {
                 /*
                  * Call machine specific IMSIC register emulation for
                  * reading TOPEI.
                  */
-                ret = env->aia_ireg_rmw_fn[PRV_S](
-                        env->aia_ireg_rmw_fn_arg[PRV_S],
+                ret = env->aia_ireg_rmw_cb[PRV_S](
+                        env->aia_ireg_rmw_cb_arg[PRV_S],
                         AIA_MAKE_IREG(ISELECT_IMSIC_TOPEI, PRV_S, true, gein,
                                       riscv_cpu_mxl_bits(env)),
                         &topei, 0, 0);
@@ -4947,7 +4998,7 @@ static RISCVException write_hgeie(CPURISCVState *env, int csrno,
                                   target_ulong val, uintptr_t ra)
 {
     /* Only GEILEN:1 bits implemented and BIT0 is never implemented */
-    val &= ((((target_ulong)1) << env->geilen) - 1) << 1;
+    val &= ((1ULL << env->geilen) - 1) << 1;
     env->hgeie = val;
     /* Update mip.SGEIP bit */
     riscv_cpu_update_mip(env, MIP_SGEIP,
@@ -5193,6 +5244,8 @@ static RISCVException write_vsstatus(CPURISCVState *env, int csrno,
     uint64_t mask = (target_ulong)-1;
     if ((val & VSSTATUS64_UXL) == 0) {
         mask &= ~VSSTATUS64_UXL;
+    } else {
+        val = riscv_write_uxl(env, val, VSSTATUS64_UXL);
     }
     if ((env->henvcfg & HENVCFG_DTE)) {
         if ((val & SSTATUS_SDT) != 0) {
@@ -5359,6 +5412,23 @@ static RISCVException read_pmpaddr(CPURISCVState *env, int csrno,
                                    target_ulong *val)
 {
     *val = pmpaddr_csr_read(env, csrno - CSR_PMPADDR0);
+
+    /*
+     * For RV64, bits 54-63 of the address registers
+     * PMPAADDR(0-63) is a WARL zero field (priv spec,
+     * section "Physical Memory Protection CSRs").
+     *
+     * We'll have to add an annoying TARGET_RISCV64 gate
+     * here to avoid complaints about masking bits 0-53
+     * of a potential 32 bit target_ulong '*var'.
+     */
+#ifdef TARGET_RISCV64
+    if (env->misa_mxl == MXL_RV64
+        && csrno >= CSR_PMPADDR0 && csrno <= CSR_PMPADDR63) {
+        target_ulong read_mask = MAKE_64BIT_MASK(0, 54);
+        *val &= read_mask;
+    }
+#endif
     return RISCV_EXCP_NONE;
 }
 
@@ -5387,7 +5457,7 @@ static RISCVException read_tdata(CPURISCVState *env, int csrno,
                                  target_ulong *val)
 {
     /* return 0 in tdata1 to end the trigger enumeration */
-    if (env->trigger_cur >= RV_MAX_TRIGGERS && csrno == CSR_TDATA1) {
+    if (env->trigger_cur >= env->num_triggers && csrno == CSR_TDATA1) {
         *val = 0;
         return RISCV_EXCP_NONE;
     }
@@ -5608,7 +5678,7 @@ static inline RISCVException riscv_csrrw_check(CPURISCVState *env,
     }
 
 #if !defined(CONFIG_USER_ONLY)
-    int csr_priv, effective_priv = env->priv;
+    privilege_mode_t csr_priv, effective_priv = env->priv;
 
     if (riscv_has_ext(env, RVH) && env->priv == PRV_S &&
         !env->virt_enabled) {
@@ -5700,6 +5770,21 @@ RISCVException riscv_csrrw(CPURISCVState *env, int csrno,
     }
 
     return riscv_csrrw_do64(env, csrno, ret_value, new_value, write_mask, ra);
+}
+
+RISCVException riscv_csr_write_i64(CPURISCVState *env, int csrno, uint64_t val)
+{
+    return riscv_csrrw(env, csrno, NULL, val,
+                       MAKE_64BIT_MASK(0, TARGET_LONG_BITS), 0);
+}
+
+RISCVException riscv_csr_read_i64(CPURISCVState *env, int csrno, uint64_t *res)
+{
+    RISCVException ret;
+    target_ulong val = 0;
+    ret = riscv_csrr(env, csrno, &val);
+    *res = val;
+    return ret;
 }
 
 static RISCVException riscv_csrrw_do128(CPURISCVState *env, int csrno,

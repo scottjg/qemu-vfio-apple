@@ -52,7 +52,8 @@ void write_subsystem_identification(void)
 
 void write_iplb_location(void)
 {
-    if (cutype == CU_TYPE_VIRTIO && virtio_get_device_type() != VIRTIO_ID_NET) {
+    if (virtio_is_supported(virtio_get_device()) &&
+        virtio_get_device_type() != VIRTIO_ID_NET) {
         lowcore->ptr_iplb = ptr2u32(&iplb);
     }
 }
@@ -163,6 +164,7 @@ static bool find_fid(uint32_t fid)
     }
 
     vdev->pci_fh = entry.fh;
+    vdev->vendor_id = entry.vendor_id;
     virtio_pci_id2type(vdev, entry.device_id);
 
     return vdev->dev_type != 0;
@@ -183,6 +185,7 @@ static void menu_setup(VDev *vdev)
 
     switch (vdev->ipl_type) {
     case S390_IPL_TYPE_CCW:
+    case S390_IPL_TYPE_PCI:
     case S390_IPL_TYPE_QEMU_SCSI:
         menu_set_parms(qipl.qipl_flags & BOOT_MENU_FLAG_MASK,
                        qipl.boot_menu_timeout);

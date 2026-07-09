@@ -280,10 +280,7 @@ buffer_drained:
 
 static void usart_cancel_transmit(Stm32l4x5UsartBaseState *s)
 {
-    if (s->watch_tag) {
-        g_source_remove(s->watch_tag);
-        s->watch_tag = 0;
-    }
+    g_clear_handle_id(&s->watch_tag, g_source_remove);
 }
 
 static void stm32l4x5_update_params(Stm32l4x5UsartBaseState *s)

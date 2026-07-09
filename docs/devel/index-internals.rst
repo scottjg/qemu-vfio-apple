@@ -14,6 +14,7 @@ Details about QEMU's various subsystems including how to add features to them.
    block-coroutine-wrapper
    clocks
    ebpf_rss
+   hexagon-sys
    migration/index
    multi-process
    reset
@@ -22,6 +23,7 @@ Details about QEMU's various subsystems including how to add features to them.
    tracing
    uefi-vars
    vfio-iommufd
+   vfio-mdpy
    writing-monitor-commands
    virtio-backends
    crypto

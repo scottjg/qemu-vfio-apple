@@ -103,14 +103,14 @@ static void update_cursor(VirtIOGPU *g, struct virtio_gpu_update_cursor *cursor)
         if (cursor->resource_id > 0) {
             vgc->update_cursor_data(g, s, cursor->resource_id);
         }
-        dpy_cursor_define(s->con, s->current_cursor);
+        qemu_console_set_cursor(s->con, s->current_cursor);
 
         s->cursor = *cursor;
     } else {
         s->cursor.pos.x = cursor->pos.x;
         s->cursor.pos.y = cursor->pos.y;
     }
-    dpy_mouse_set(s->con, cursor->pos.x, cursor->pos.y, cursor->resource_id);
+    qemu_console_set_mouse(s->con, cursor->pos.x, cursor->pos.y, cursor->resource_id);
 }
 
 struct virtio_gpu_simple_resource *
@@ -390,7 +390,7 @@ void virtio_gpu_disable_scanout(VirtIOGPU *g, int scanout_id)
         res->scanout_bitmask &= ~(1 << scanout_id);
     }
 
-    dpy_gfx_replace_surface(scanout->con, NULL);
+    qemu_console_set_surface(scanout->con, NULL);
     scanout->resource_id = 0;
     scanout->ds = NULL;
     scanout->width = 0;
@@ -531,8 +531,8 @@ static void virtio_gpu_resource_flush(VirtIOGPU *g,
                 rf.r.y + rf.r.height >= scanout->y) {
                 within_bounds = true;
 
-                if (console_has_gl(scanout->con)) {
-                    dpy_gl_update(scanout->con, 0, 0, scanout->width,
+                if (qemu_console_has_gl(scanout->con)) {
+                    qemu_console_gl_update(scanout->con, 0, 0, scanout->width,
                                   scanout->height);
                     update_submitted = true;
                 }
@@ -582,8 +582,8 @@ static void virtio_gpu_resource_flush(VirtIOGPU *g,
         /* work out the area we need to update for each console */
         if (qemu_rect_intersect(&flush_rect, &rect, &rect)) {
             qemu_rect_translate(&rect, -scanout->x, -scanout->y);
-            dpy_gfx_update(g->parent_obj.scanout[i].con,
-                           rect.x, rect.y, rect.width, rect.height);
+            qemu_console_update(g->parent_obj.scanout[i].con,
+                                rect.x, rect.y, rect.width, rect.height);
         }
     }
 }
@@ -649,7 +649,7 @@ static bool virtio_gpu_do_set_scanout(VirtIOGPU *g,
     g->parent_obj.enable = 1;
 
     if (res->blob) {
-        if (console_has_gl(scanout->con)) {
+        if (qemu_console_has_gl(scanout->con)) {
             if (!virtio_gpu_update_dmabuf(g, scanout_id, res, fb, r)) {
                 virtio_gpu_update_scanout(g, scanout_id, res, fb, r);
             } else {
@@ -665,7 +665,7 @@ static bool virtio_gpu_do_set_scanout(VirtIOGPU *g,
     }
 
     /* create a surface for this scanout */
-    if ((res->blob && !console_has_gl(scanout->con)) ||
+    if ((res->blob && !qemu_console_has_gl(scanout->con)) ||
         !scanout->ds ||
         surface_data(scanout->ds) != data + fb->offset ||
         scanout->width != r->width ||
@@ -686,7 +686,7 @@ static bool virtio_gpu_do_set_scanout(VirtIOGPU *g,
         qemu_displaysurface_set_share_handle(scanout->ds, res->share_handle, fb->offset);
 
         pixman_image_unref(rect);
-        dpy_gfx_replace_surface(g->parent_obj.scanout[scanout_id].con,
+        qemu_console_set_surface(g->parent_obj.scanout[scanout_id].con,
                                 scanout->ds);
     }
 
@@ -1483,10 +1483,10 @@ static int virtio_gpu_post_load(void *opaque, int version_id)
             }
             scanout->ds = qemu_create_displaysurface_pixman(res->image);
             qemu_displaysurface_set_share_handle(scanout->ds, res->share_handle, 0);
-            dpy_gfx_replace_surface(scanout->con, scanout->ds);
+            qemu_console_set_surface(scanout->con, scanout->ds);
         }
 
-        dpy_gfx_update_full(scanout->con);
+        qemu_console_update_full(scanout->con);
         if (scanout->cursor.resource_id) {
             update_cursor(g, &scanout->cursor);
         }
@@ -1602,7 +1602,7 @@ static void virtio_gpu_reset_bh(void *opaque)
     }
 
     for (i = 0; i < g->parent_obj.conf.max_outputs; i++) {
-        dpy_gfx_replace_surface(g->parent_obj.scanout[i].con, NULL);
+        qemu_console_set_surface(g->parent_obj.scanout[i].con, NULL);
     }
 
     g->reset_finished = true;

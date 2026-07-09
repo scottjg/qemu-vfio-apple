@@ -60,8 +60,8 @@ static void hpm_incr_ctr(RISCVIOMMUState *s, uint32_t ctr_idx)
     const uint32_t off = ctr_idx << 3;
     uint64_t cntr_val;
 
-    cntr_val = ldq_le_p(&s->regs_rw[RISCV_IOMMU_REG_IOHPMCTR_BASE + off]);
-    stq_le_p(&s->regs_rw[RISCV_IOMMU_REG_IOHPMCTR_BASE + off], cntr_val + 1);
+    cntr_val = ldq_le_p(&s->regs[RISCV_IOMMU_REG_IOHPMCTR_BASE + off]);
+    stq_le_p(&s->regs[RISCV_IOMMU_REG_IOHPMCTR_BASE + off], cntr_val + 1);
 
     trace_riscv_iommu_hpm_incr_ctr(cntr_val);
 
@@ -245,7 +245,8 @@ void riscv_iommu_process_iocntinh_cy(RISCVIOMMUState *s, bool prev_cy_inh)
         s, RISCV_IOMMU_REG_IOCOUNTINH);
 
     /* We only need to process CY bit toggle. */
-    if (!(inhibit ^ prev_cy_inh)) {
+    bool cy_inh = !!(inhibit & RISCV_IOMMU_IOCOUNTINH_CY);
+    if (cy_inh == prev_cy_inh) {
         return;
     }
 

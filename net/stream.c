@@ -71,24 +71,15 @@ static gboolean net_stream_send(QIOChannel *ioc,
 static void net_stream_cleanup(NetClientState *nc)
 {
     NetStreamState *s = DO_UPCAST(NetStreamState, data.nc, nc);
-    if (s->timer_tag) {
-        g_source_remove(s->timer_tag);
-        s->timer_tag = 0;
-    }
+    g_clear_handle_id(&s->timer_tag, g_source_remove);
     if (s->addr) {
         qapi_free_SocketAddress(s->addr);
         s->addr = NULL;
     }
     if (s->data.ioc) {
         if (QIO_CHANNEL_SOCKET(s->data.ioc)->fd != -1) {
-            if (s->data.ioc_read_tag) {
-                g_source_remove(s->data.ioc_read_tag);
-                s->data.ioc_read_tag = 0;
-            }
-            if (s->data.ioc_write_tag) {
-                g_source_remove(s->data.ioc_write_tag);
-                s->data.ioc_write_tag = 0;
-            }
+            g_clear_handle_id(&s->data.ioc_read_tag, g_source_remove);
+            g_clear_handle_id(&s->data.ioc_write_tag, g_source_remove);
         }
         object_unref(OBJECT(s->data.ioc));
         s->data.ioc = NULL;

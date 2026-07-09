@@ -521,7 +521,7 @@ static void virtio_gpu_rect_update(VirtIOGPU *g, int idx, int x, int y,
         return;
     }
 
-    dpy_gl_update(g->parent_obj.scanout[idx].con, x, y, width, height);
+    qemu_console_gl_update(g->parent_obj.scanout[idx].con, x, y, width, height);
 }
 
 static void virgl_cmd_resource_flush(VirtIOGPU *g,
@@ -584,16 +584,15 @@ static void virgl_cmd_set_scanout(VirtIOGPU *g,
         qemu_console_resize(g->parent_obj.scanout[ss.scanout_id].con,
                             ss.r.width, ss.r.height);
         virgl_renderer_force_ctx_0();
-        dpy_gl_scanout_texture(
+        qemu_console_gl_scanout_texture(
             g->parent_obj.scanout[ss.scanout_id].con, info.tex_id,
             info.flags & VIRTIO_GPU_RESOURCE_FLAG_Y_0_TOP,
             info.width, info.height,
             ss.r.x, ss.r.y, ss.r.width, ss.r.height,
             d3d_tex2d);
     } else {
-        dpy_gfx_replace_surface(
-            g->parent_obj.scanout[ss.scanout_id].con, NULL);
-        dpy_gl_scanout_disable(g->parent_obj.scanout[ss.scanout_id].con);
+        qemu_console_set_surface(g->parent_obj.scanout[ss.scanout_id].con, NULL);
+        qemu_console_gl_scanout_disable(g->parent_obj.scanout[ss.scanout_id].con);
     }
     g->parent_obj.scanout[ss.scanout_id].resource_id = ss.resource_id;
 }
@@ -1315,7 +1314,7 @@ virgl_create_context(void *opaque, int scanout_idx,
     qparams.major_ver = params->major_ver;
     qparams.minor_ver = params->minor_ver;
 
-    ctx = dpy_gl_ctx_create(g->parent_obj.scanout[scanout_idx].con, &qparams);
+    ctx = qemu_console_gl_ctx_create(g->parent_obj.scanout[scanout_idx].con, &qparams);
     return (virgl_renderer_gl_context)ctx;
 }
 
@@ -1324,7 +1323,7 @@ static void virgl_destroy_context(void *opaque, virgl_renderer_gl_context ctx)
     VirtIOGPU *g = opaque;
     QEMUGLContext qctx = (QEMUGLContext)ctx;
 
-    dpy_gl_ctx_destroy(g->parent_obj.scanout[0].con, qctx);
+    qemu_console_gl_ctx_destroy(g->parent_obj.scanout[0].con, qctx);
 }
 
 static int virgl_make_context_current(void *opaque, int scanout_idx,
@@ -1333,8 +1332,7 @@ static int virgl_make_context_current(void *opaque, int scanout_idx,
     VirtIOGPU *g = opaque;
     QEMUGLContext qctx = (QEMUGLContext)ctx;
 
-    return dpy_gl_ctx_make_current(g->parent_obj.scanout[scanout_idx].con,
-                                   qctx);
+    return qemu_console_gl_ctx_make_current(g->parent_obj.scanout[scanout_idx].con, qctx);
 }
 
 static struct virgl_renderer_callbacks virtio_gpu_3d_cbs = {
@@ -1399,8 +1397,8 @@ void virtio_gpu_virgl_reset_scanout(VirtIOGPU *g)
     int i;
 
     for (i = 0; i < g->parent_obj.conf.max_outputs; i++) {
-        dpy_gfx_replace_surface(g->parent_obj.scanout[i].con, NULL);
-        dpy_gl_scanout_disable(g->parent_obj.scanout[i].con);
+        qemu_console_set_surface(g->parent_obj.scanout[i].con, NULL);
+        qemu_console_gl_scanout_disable(g->parent_obj.scanout[i].con);
     }
 }
 

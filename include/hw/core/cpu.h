@@ -187,12 +187,6 @@ struct CPUClass {
     const TCGCPUOps *tcg_ops;
 
     /*
-     * if not NULL, this is called in order for the CPUClass to initialize
-     * class data that depends on the accelerator, see accel/accel-common.c.
-     */
-    void (*init_accel_cpu)(struct AccelCPUClass *accel_cpu, CPUClass *cc);
-
-    /*
      * Keep non-pointer data at the end to minimize holes.
      */
     int reset_dump_flags;
@@ -446,7 +440,7 @@ struct qemu_work_item;
  * @stopped: Indicates the CPU has been artificially stopped.
  * @unplug: Indicates a pending CPU unplug request.
  * @crash_occurred: Indicates the OS reported a crash (panic) for this CPU
- * @singlestep_enabled: Flags for single-stepping.
+ * @singlestep_flags: Flags for single-stepping.
  * @icount_extra: Instructions until next timer event.
  * @cpu_ases: Pointer to array of CPUAddressSpaces (which define the
  *            AddressSpaces this CPU has)
@@ -486,7 +480,7 @@ struct CPUState {
     /*< private >*/
     DeviceState parent_obj;
     /* cache to avoid expensive CPU_GET_CLASS */
-    CPUClass *cc;
+    const CPUClass *cc;
     /*< public >*/
 
     int nr_threads;
@@ -511,7 +505,7 @@ struct CPUState {
     int exclusive_context_count;
     uint32_t cflags_next_tb;
     uint32_t interrupt_request;
-    int singlestep_enabled;
+    unsigned singlestep_flags;
     int64_t icount_budget;
     int64_t icount_extra;
     uint64_t random_seed;
@@ -745,32 +739,36 @@ enum CPUDumpFlags {
 void cpu_dump_state(CPUState *cpu, FILE *f, int flags);
 
 /**
- * cpu_get_phys_page_attrs_debug:
- * @cpu: The CPU to obtain the physical page address for.
- * @addr: The virtual address.
- * @attrs: Updated on return with the memory transaction attributes to use
- *         for this access.
+ * TranslateForDebugResult: gives result of cpu_translate_for_debug()
  *
- * Obtains the physical page corresponding to a virtual one, together
- * with the corresponding memory transaction attributes to use for the access.
- * Use it only for debugging because no protection checks are done.
- *
- * Returns: Corresponding physical page address or -1 if no page found.
+ * @physaddr: the physical address corresponding to the virtual address
+ * @attrs: the transaction attributes for this access
+ * @lg_page_size: log2 of the size of the aligned block of memory
+ * that this physaddr and attrs are valid for.
  */
-hwaddr cpu_get_phys_page_attrs_debug(CPUState *cpu, vaddr addr,
-                                     MemTxAttrs *attrs);
+typedef struct TranslateForDebugResult {
+    hwaddr physaddr;
+    MemTxAttrs attrs;
+    uint8_t lg_page_size;
+} TranslateForDebugResult;
 
 /**
- * cpu_get_phys_page_debug:
- * @cpu: The CPU to obtain the physical page address for.
- * @addr: The virtual address.
+ * cpu_translate_for_debug:
+ * @cpu: The CPU use for the virtual-to-physical translation
+ * @addr: The virtual address
+ * @result: Struct filled in with results of translation
  *
- * Obtains the physical page corresponding to a virtual one.
+ * Perform a virtual-to-physical address translation for debug accesses.
  * Use it only for debugging because no protection checks are done.
  *
- * Returns: Corresponding physical page address or -1 if no page found.
+ * The address need not be page-aligned; the returned address in @result
+ * will be the physical address corresponding to that virtual address.
+ *
+ * Returns: false on translation failure; true on successful translation
+ * and fills in the fields of @result.
  */
-hwaddr cpu_get_phys_page_debug(CPUState *cpu, vaddr addr);
+bool cpu_translate_for_debug(CPUState *cpu, vaddr addr,
+                             TranslateForDebugResult *result);
 
 /** cpu_asidx_from_attrs:
  * @cpu: CPU
@@ -1134,46 +1132,29 @@ void qemu_init_vcpu(CPUState *cpu);
 /**
  * cpu_single_step:
  * @cpu: CPU to the flags for.
- * @enabled: Flags to enable.
+ * @flags: Flags to enable.
  *
  * Enables or disables single-stepping for @cpu.
  */
-void cpu_single_step(CPUState *cpu, int enabled);
+void cpu_single_step(CPUState *cpu, unsigned flags);
 
-/* Breakpoint/watchpoint flags */
-#define BP_MEM_READ           0x01
-#define BP_MEM_WRITE          0x02
-#define BP_MEM_ACCESS         (BP_MEM_READ | BP_MEM_WRITE)
-#define BP_STOP_BEFORE_ACCESS 0x04
-/* 0x08 currently unused */
-#define BP_GDB                0x10
-#define BP_CPU                0x20
-#define BP_ANY                (BP_GDB | BP_CPU)
-#define BP_HIT_SHIFT          6
-#define BP_WATCHPOINT_HIT_READ  (BP_MEM_READ << BP_HIT_SHIFT)
-#define BP_WATCHPOINT_HIT_WRITE (BP_MEM_WRITE << BP_HIT_SHIFT)
-#define BP_WATCHPOINT_HIT       (BP_MEM_ACCESS << BP_HIT_SHIFT)
+/**
+ * cpu_single_stepping:
+ * @cpu: The vCPU to check
+ *
+ * Returns whether the vCPU has single-stepping enabled.
+ */
+static inline bool cpu_single_stepping(const CPUState *cpu)
+{
+    return cpu->singlestep_flags & SSTEP_ENABLE;
+}
 
 int cpu_breakpoint_insert(CPUState *cpu, vaddr pc, int flags,
                           CPUBreakpoint **breakpoint);
 int cpu_breakpoint_remove(CPUState *cpu, vaddr pc, int flags);
 void cpu_breakpoint_remove_by_ref(CPUState *cpu, CPUBreakpoint *breakpoint);
 void cpu_breakpoint_remove_all(CPUState *cpu, int mask);
-
-/* Return true if PC matches an installed breakpoint.  */
-static inline bool cpu_breakpoint_test(CPUState *cpu, vaddr pc, int mask)
-{
-    CPUBreakpoint *bp;
-
-    if (unlikely(!QTAILQ_EMPTY(&cpu->breakpoints))) {
-        QTAILQ_FOREACH(bp, &cpu->breakpoints, entry) {
-            if (bp->pc == pc && (bp->flags & mask)) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
+bool cpu_breakpoint_test(CPUState *cpu, vaddr pc, int mask);
 
 /**
  * cpu_get_address_space:

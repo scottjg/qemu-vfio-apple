@@ -14,6 +14,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/base-arch-defs.h"
 #include "system/address-spaces.h"
 #include "system/ioport.h"
 #include "exec/gdbstub.h"
@@ -22,19 +23,57 @@
 #include "monitor/hmp.h"
 #include "qemu/help_option.h"
 #include "monitor/hmp.h"
-#include "monitor/hmp-target.h"
+#include "monitor/hmp-completion.h"
 #include "monitor/monitor-internal.h"
+#include "monitor/qdev.h"
 #include "qapi/error.h"
 #include "qapi/qapi-commands-control.h"
 #include "qapi/qapi-commands-machine.h"
 #include "qapi/qapi-commands-misc.h"
+#include "block/block-hmp-cmds.h"
 #include "qobject/qdict.h"
 #include "qemu/cutils.h"
 #include "qemu/log.h"
+#include "net/slirp.h"
+#include "system/device_tree.h"
 #include "system/hw_accel.h"
 #include "system/memory.h"
 #include "system/system.h"
 #include "disas/disas.h"
+
+/* Please update hmp-commands.hx when adding or changing commands */
+static HMPCommand hmp_info_cmds[] = {
+#include "hmp-commands-info.h"
+    { NULL, NULL, },
+};
+
+/* hmp_cmds and hmp_info_cmds would be sorted at runtime */
+static HMPCommand hmp_cmds[] = {
+#include "hmp-commands.h"
+    { NULL, NULL, },
+};
+
+HMPCommand *hmp_cmds_for_target(bool info_command)
+{
+    return info_command ? hmp_info_cmds : hmp_cmds;
+}
+
+static int
+compare_mon_cmd(const void *a, const void *b)
+{
+    return strcmp(((const HMPCommand *)a)->name,
+            ((const HMPCommand *)b)->name);
+}
+
+static void __attribute__((__constructor__)) sortcmdlist(void)
+{
+    qsort(hmp_cmds, ARRAY_SIZE(hmp_cmds) - 1,
+          sizeof(*hmp_cmds),
+          compare_mon_cmd);
+    qsort(hmp_info_cmds, ARRAY_SIZE(hmp_info_cmds) - 1,
+          sizeof(*hmp_info_cmds),
+          compare_mon_cmd);
+}
 
 bool hmp_handle_error(Monitor *mon, Error *err)
 {
@@ -90,7 +129,10 @@ void hmp_info_version(Monitor *mon, const QDict *qdict)
 
 void hmp_quit(Monitor *mon, const QDict *qdict)
 {
-    monitor_suspend(mon);
+    MonitorHMP *hmp = MONITOR_HMP(mon);
+    if (hmp->use_readline) {
+        monitor_suspend(mon);
+    }
     qmp_quit(NULL);
 }
 
@@ -219,6 +261,17 @@ void hmp_help(Monitor *mon, const QDict *qdict)
     hmp_help_cmd(mon, qdict_get_try_str(qdict, "name"));
 }
 
+void hmp_clear(Monitor *mon, const QDict *qdict)
+{
+    /*
+     * Send an ANSI escape sequence:
+     * "\x1b[H" - move cursor to top-left
+     * "\x1b[2J" - clear visible screen
+     * "\x1b[3J" - clear scrollback
+     */
+    monitor_printf(mon, "\x1b[H\x1b[2J\x1b[3J");
+}
+
 void hmp_info_help(Monitor *mon, const QDict *qdict)
 {
     hmp_help_cmd(mon, "info");
@@ -237,7 +290,7 @@ void hmp_info_sync_profile(Monitor *mon, const QDict *qdict)
 
 void hmp_info_history(Monitor *mon, const QDict *qdict)
 {
-    MonitorHMP *hmp_mon = container_of(mon, MonitorHMP, common);
+    MonitorHMP *hmp_mon = container_of(mon, MonitorHMP, parent_obj);
     int i;
     const char *str;
 
@@ -714,19 +767,17 @@ void hmp_gva2gpa(Monitor *mon, const QDict *qdict)
 {
     vaddr addr = qdict_get_int(qdict, "addr");
     CPUState *cs = mon_get_cpu(mon);
-    hwaddr gpa;
+    TranslateForDebugResult tres;
 
     if (!cs) {
         monitor_printf(mon, "No cpu\n");
         return;
     }
 
-    gpa  = cpu_get_phys_page_debug(cs, addr & TARGET_PAGE_MASK);
-    if (gpa == -1) {
+    if (!cpu_translate_for_debug(cs, addr, &tres)) {
         monitor_printf(mon, "Unmapped\n");
     } else {
-        monitor_printf(mon, "gpa: 0x%" HWADDR_PRIx "\n",
-                       gpa + (addr & ~TARGET_PAGE_MASK));
+        monitor_printf(mon, "gpa: 0x%" HWADDR_PRIx "\n", tres.physaddr);
     }
 }
 

@@ -207,8 +207,7 @@ static bool fb_update_display(void *opaque)
                                draw_line_src16, s, &first, &last);
 
     if (first >= 0) {
-        dpy_gfx_update(s->con, 0, first, s->config.xres,
-                       last - first + 1);
+        qemu_console_update(s->con, 0, first, s->config.xres, last - first + 1);
     }
 
     s->invalidate = false;
@@ -427,7 +426,7 @@ static void bcm2835_fb_realize(DeviceState *dev, Error **errp)
 
     bcm2835_fb_reset(dev);
 
-    s->con = graphic_console_init(dev, 0, &vgafb_ops, s);
+    s->con = qemu_graphic_console_create(dev, 0, &vgafb_ops, s);
     qemu_console_resize(s->con, s->config.xres, s->config.yres);
 }
 

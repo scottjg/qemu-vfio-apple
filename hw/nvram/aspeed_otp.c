@@ -57,12 +57,12 @@ static bool valid_program_data(uint32_t otp_addr,
     return has_programmable_bits != 0;
 }
 
-static bool program_otpmem_data(void *opaque, uint32_t otp_addr,
+static bool program_otpmem_data(void *opaque, hwaddr otp_offset,
                              uint32_t prog_bit, uint32_t *value)
 {
     AspeedOTPState *s = opaque;
+    uint32_t otp_addr = otp_offset >> 2;
     bool is_odd = otp_addr & 1;
-    uint32_t otp_offset = otp_addr << 2;
 
     memcpy(value, s->storage + otp_offset, sizeof(uint32_t));
 
@@ -79,26 +79,25 @@ static bool program_otpmem_data(void *opaque, uint32_t otp_addr,
     return true;
 }
 
-static void aspeed_otp_write(void *opaque, hwaddr otp_addr,
+static void aspeed_otp_write(void *opaque, hwaddr otp_offset,
                                 uint64_t val, unsigned size)
 {
     AspeedOTPState *s = opaque;
-    uint32_t otp_offset, value;
+    uint32_t value;
 
-    if (!program_otpmem_data(s, otp_addr, val, &value)) {
+    if (!program_otpmem_data(s, otp_offset, val, &value)) {
         qemu_log_mask(LOG_GUEST_ERROR,
                       "%s: Failed to program data, value = %x, bit = %"PRIx64"\n",
                       __func__, value, val);
         return;
     }
 
-    otp_offset = otp_addr << 2;
     memcpy(s->storage + otp_offset, &value, size);
 
     if (s->blk) {
         if (blk_pwrite(s->blk, otp_offset, size, &value, 0) < 0) {
             qemu_log_mask(LOG_GUEST_ERROR,
-                          "%s: Failed to write %x to %x\n",
+                          "%s: Failed to write %x to %"HWADDR_PRIx"\n",
                           __func__, value, otp_offset);
 
             return;
@@ -175,16 +174,13 @@ static void aspeed_otp_class_init(ObjectClass *klass, const void *data)
     device_class_set_props(dc, aspeed_otp_properties);
 }
 
-static const TypeInfo aspeed_otp_info = {
-    .name          = TYPE_ASPEED_OTP,
-    .parent        = TYPE_DEVICE,
-    .instance_size = sizeof(AspeedOTPState),
-    .class_init    = aspeed_otp_class_init,
+static const TypeInfo aspeed_otp_types[] = {
+    {
+        .name          = TYPE_ASPEED_OTP,
+        .parent        = TYPE_DEVICE,
+        .instance_size = sizeof(AspeedOTPState),
+        .class_init    = aspeed_otp_class_init,
+    }
 };
 
-static void aspeed_otp_register_types(void)
-{
-    type_register_static(&aspeed_otp_info);
-}
-
-type_init(aspeed_otp_register_types)
+DEFINE_TYPES(aspeed_otp_types)

@@ -108,4 +108,5 @@ static void igvm_cfg_finalize(Object *obj)
     if (igvm->file >= 0) {
         igvm_free(igvm->file);
     }
+    g_free(igvm->filename);
 }

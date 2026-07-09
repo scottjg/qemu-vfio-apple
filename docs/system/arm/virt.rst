@@ -39,6 +39,7 @@ The virt board supports:
 - A PL061 GPIO controller
 - An optional machine-wide SMMUv3 IOMMU
 - User-creatable SMMUv3 devices (see below for example)
+- An optional SBSA Generic Watchdog Timer (see below)
 - hotpluggable DIMMs
 - hotpluggable NVDIMMs
 - An MSI controller (GICv2m or ITS).
@@ -161,6 +162,25 @@ gic-version
     GICv3. This allows up to 512 CPUs.
   ``4``
     GICv4. Requires ``virtualization`` to be ``on``; allows up to 317 CPUs.
+  ``x-5``
+    GICv5 (experimental). This is an experimental emulation of the GICv5,
+    based on the EAC release of the GICv5 architecture specification.
+    Experimental means:
+
+    - guest-visible behaviour may change when the final version of
+      the specification is released and QEMU implements it
+    - migration support is not yet implemented
+    - the GICv5 is not exposed to the guest via ACPI tables, only via DTB
+    - the way the interrupt controller is exposed to the guest and the
+      command line syntax for enabling it may change
+
+    The current implementation supports only an EL1 guest (no EL2 or
+    EL3 and no Realm support), and does not implement the ITS (no
+    MSI support).
+
+    Note that as the GICv5 is an Armv9 feature, enabling it will
+    automatically disable support for AArch32 at all exception levels
+    except for EL0 (userspace).
   ``host``
     Use the same GIC version the host provides, when using KVM
   ``max``
@@ -268,6 +288,55 @@ User-creatable SMMUv3 devices
       ...
       -device pxb-pcie,id=pcie.1,numa_node=1
       -device arm-smmuv3,primary-bus=pcie.1,id=smmuv3.1
+
+  *Accelerated SMMUv3 (nested translation)*
+
+  The ``accel=on`` option enables hardware-accelerated nested translation
+  for vfio-pci passthrough devices. In this mode the guest SMMU driver
+  programs its own Stage-1 page tables, with the host SMMUv3 handling both
+  Stage-1 (guest) and Stage-2 (host) translations in hardware. The host
+  SMMUv3 must support nested translation. This mode requires the iommufd
+  backend and is only supported when booting with ACPI (not device tree).
+
+  When ``accel=on``, QEMU automatically derives the values for the
+  ``ril``, ``ats``, ``oas``, ``ssidsize`` and ``cmdqv`` sub-options
+  from the host SMMUv3 capabilities unless they are set explicitly.
+
+  Example::
+
+      -device arm-smmuv3,primary-bus=pcie.0,id=smmuv3.0,accel=on
+
+  *Accelerated SMMUv3 command queues (Tegra241 CMDQV)*
+
+  The ``cmdqv`` sub-option enables NVIDIA Tegra241 Command Queue
+  Virtualization (CMDQV) on supported hosts. With CMDQV, each accelerated
+  ``arm-smmuv3`` device gets dedicated hardware command queues and the
+  guest issues SMMU invalidation commands directly to real hardware,
+  bypassing QEMU and improving throughput for workloads that issue many
+  invalidations. Without it, every invalidation command traps into QEMU.
+
+SBSA Generic Watchdog
+"""""""""""""""""""""
+
+The SBSA Generic Watchdog Timer (GWDT) can be added to the virt machine
+using ``-device sbsa-gwdt``. It is only supported on the virt machine,
+which wires up statically assigned MMIO regions and IRQs via
+machine-specific plug handlers.
+
+Two modes are available:
+
+Native mode (default)
+  The watchdog is described via the ACPI GTDT table and FDT, using
+  the system counter frequency. Example::
+
+    -device sbsa-gwdt
+
+WDAT mode
+  The watchdog is described via the ACPI WDAT table (no FDT node),
+  using a 1 kHz timer frequency. WDAT and GTDT watchdog entries are
+  mutually exclusive. Example::
+
+    -device sbsa-gwdt,wdat=on
 
 Linux guest kernel configuration
 """"""""""""""""""""""""""""""""

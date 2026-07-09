@@ -176,7 +176,7 @@ static bool tricore_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 
 static const struct SysemuCPUOps tricore_sysemu_ops = {
     .has_work = tricore_cpu_has_work,
-    .get_phys_page_debug = tricore_cpu_get_phys_page_debug,
+    .get_phys_addr_debug = tricore_cpu_get_phys_addr_debug,
 };
 
 static const TCGCPUOps tricore_tcg_ops = {

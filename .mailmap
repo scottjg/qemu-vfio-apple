@@ -31,7 +31,8 @@ malc <av1474@comtv.ru> malc <malc@c046a42c-6fe2-441c-8c8c-71466251a162>
 Aaron Larson <alarson@ddci.com> alarson@ddci.com
 Andreas Färber <andreas.faerber@web.de> Andreas Färber <andreas.faerber>
 fanwenjie <fanwj@mail.ustc.edu.cn> fanwj@mail.ustc.edu.cn <fanwj@mail.ustc.edu.cn>
-Jason Wang <jasowang@redhat.com> Jason Wang <jasowang>
+Jason Wang <jasowangio@gmail.com> Jason Wang <jasowang>
+Jason Wang <jasowangio@gmail.com> Jason Wang <jasowang@redhat.com>
 Marek Dolata <mkdolata@us.ibm.com> mkdolata@us.ibm.com <mkdolata@us.ibm.com>
 Michael Ellerman <mpe@ellerman.id.au> michael@ozlabs.org <michael@ozlabs.org>
 Nick Hudson <hnick@vmware.com> hnick@vmware.com <hnick@vmware.com>
@@ -76,12 +77,17 @@ Aleksandar Rikalo <aleksandar.rikalo@syrmia.com> <arikalo@wavecomp.com>
 Aleksandar Rikalo <aleksandar.rikalo@syrmia.com> <aleksandar.rikalo@rt-rk.com>
 Alex Williamson <alex@shazbot.org> <alex.williamson@redhat.com>
 Alexander Graf <agraf@csgraf.de> <agraf@suse.de>
+Andrew Jones <andrew.jones@oss.qualcomm.com> <ajones@ventanamicro.com>
+Andrew Jones <andrew.jones@oss.qualcomm.com> <drjones@redhat.com>
 Ani Sinha <anisinha@redhat.com> <ani@anisinha.ca>
 Anthony Liguori <anthony@codemonkey.ws> Anthony Liguori <aliguori@us.ibm.com>
 Brian Cain <brian.cain@oss.qualcomm.com> <bcain@quicinc.com>
 Brian Cain <brian.cain@oss.qualcomm.com> <quic_bcain@quicinc.com>
 Christian Borntraeger <borntraeger@linux.ibm.com> <borntraeger@de.ibm.com>
 Damien Hedde <damien.hedde@dahe.fr> <damien.hedde@greensocs.com>
+Daniel Henrique Barboza <daniel.barboza@oss.qualcomm.com> <dbarboza@ventanamicro.com>
+Daniel Henrique Barboza <daniel.barboza@oss.qualcomm.com> <danielhb413@gmail.com>
+Daniel Henrique Barboza <daniel.barboza@oss.qualcomm.com> <danielhb@linux.vnet.ibm.com>
 David Hildenbrand <david@kernel.org> <david@redhat.com>
 Filip Bozuta <filip.bozuta@syrmia.com> <filip.bozuta@rt-rk.com.com>
 Frederic Konrad <konrad.frederic@yahoo.fr> <fred.konrad@greensocs.com>
@@ -104,14 +110,16 @@ Paul Burton <paulburton@kernel.org> <paul.burton@mips.com>
 Paul Burton <paulburton@kernel.org> <paul.burton@imgtec.com>
 Paul Burton <paulburton@kernel.org> <paul@archlinuxmips.org>
 Paul Burton <paulburton@kernel.org> <pburton@wavecomp.com>
-Philippe Mathieu-Daudé <philmd@linaro.org> <f4bug@amsat.org>
-Philippe Mathieu-Daudé <philmd@linaro.org> <philmd@redhat.com>
-Philippe Mathieu-Daudé <philmd@linaro.org> <philmd@fungible.com>
+Philippe Mathieu-Daudé <philmd@mailo.com> <f4bug@amsat.org>
+Philippe Mathieu-Daudé <philmd@mailo.com> <philmd@redhat.com>
+Philippe Mathieu-Daudé <philmd@mailo.com> <philmd@fungible.com>
+Philippe Mathieu-Daudé <philmd@mailo.com> <philmd@linaro.org>
 Pierrick Bouvier <pierrick.bouvier@oss.qualcomm.com> <pierrick.bouvier@linaro.org>
 Roman Bolshakov <rbolshakov@ddn.com> <r.bolshakov@yadro.com>
 Sriram Yagnaraman <sriram.yagnaraman@ericsson.com> <sriram.yagnaraman@est.tech>
 Stefan Brankovic <stefan.brankovic@syrmia.com> <stefan.brankovic@rt-rk.com.com>
 Stefan Weil <sw@weilnetz.de> Stefan Weil <stefan@weilnetz.de>
+Song Gao <17746591750@163.com> <gaosong@loongson.cn>
 Taylor Simpson <ltaylorsimpson@gmail.com> <tsimpson@quicinc.com>
 Yongbok Kim <yongbok.kim@mips.com> <yongbok.kim@imgtec.com>
 

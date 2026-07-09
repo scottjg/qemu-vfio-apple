@@ -24,8 +24,8 @@
 #include "cpu-qom.h"
 #include "kvm/hyperv-proto.h"
 #include "exec/cpu-common.h"
-#include "exec/cpu-defs.h"
 #include "exec/cpu-interrupt.h"
+#include "exec/target_long.h"
 #include "exec/memop.h"
 #include "hw/i386/apic.h"
 #include "hw/i386/topology.h"
@@ -1983,6 +1983,9 @@ typedef struct CPUCaches {
         CPUCacheInfo *l3_cache;
 } CPUCaches;
 
+struct kvm_msrs;
+struct hv_vp_register_page;
+
 typedef struct CPUArchState {
     /* standard registers */
     target_ulong regs[CPU_NB_EREGS];
@@ -2061,10 +2064,10 @@ typedef struct CPUArchState {
     uint64_t vm_hsave;
 
 #ifdef TARGET_X86_64
-    target_ulong lstar;
-    target_ulong cstar;
-    target_ulong fmask;
-    target_ulong kernelgsbase;
+    uint64_t lstar;
+    uint64_t cstar;
+    uint64_t fmask;
+    uint64_t kernelgsbase;
 
     /* FRED MSRs */
     uint64_t fred_rsp0;
@@ -2289,6 +2292,10 @@ typedef struct CPUArchState {
     QEMUTimer *xen_periodic_timer;
     QemuMutex xen_timers_lock;
 #endif
+#if defined(CONFIG_MSHV)
+    /* Shared register page */
+    struct hv_vp_register_page *regs_page;
+#endif
 #if defined(CONFIG_HVF) || defined(CONFIG_MSHV) || defined(CONFIG_WHPX)
     void *emu_mmio_buf;
 #endif
@@ -2314,8 +2321,6 @@ typedef struct CPUArchState {
     /* Bitmap of available CPU topology levels for this CPU. */
     DECLARE_BITMAP(avail_cpu_topo, CPU_TOPOLOGY_LEVEL__MAX);
 } CPUX86State;
-
-struct kvm_msrs;
 
 /**
  * X86CPU:
@@ -2581,8 +2586,8 @@ int cpu_x86_support_mca_broadcast(CPUX86State *env);
 #ifndef CONFIG_USER_ONLY
 int x86_cpu_pending_interrupt(CPUState *cs, int interrupt_request);
 
-hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cpu, vaddr addr,
-                                         MemTxAttrs *attrs);
+bool x86_cpu_translate_for_debug(CPUState *cpu, vaddr addr,
+                                 TranslateForDebugResult *result);
 int cpu_get_pic_interrupt(CPUX86State *s);
 
 /* MS-DOS compatibility mode FPU exception support */

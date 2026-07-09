@@ -36,7 +36,8 @@ DEF("machine", HAS_ARG, QEMU_OPTION_machine, \
     "                dea-key-wrap=on|off controls support for DEA key wrapping (default=on)\n"
     "                suppress-vmdesc=on|off disables self-describing migration (default=off)\n"
     "                nvdimm=on|off controls NVDIMM support (default=off)\n"
-    "                memory-encryption=<id> memory encryption object to use (default=none)\n"
+    "                confidential-guest-support=<id> specifies confidential guest support object (default=none)\n"
+    "                memory-encryption=<id> (memory-encryption is the alias of confidential-guest-support, recommend to use confidential-guest-support)\n"
     "                hmat=on|off controls ACPI HMAT support (default=off)\n"
     "                spcr=on|off controls ACPI SPCR support (default=on)\n"
 #ifdef CONFIG_POSIX
@@ -100,8 +101,12 @@ SRST
     ``nvdimm=on|off``
         Enables or disables NVDIMM support. The default is off.
 
+    ``confidential-guest-support=<id>``
+        confidential guest support object to use. The default is none.
+
     ``memory-encryption=<id>``
-        Memory encryption object to use. The default is none.
+        The alias of ``confidential-guest-support``. Recommend to use
+        confidential-guest-support.
 
     ``hmat=on|off``
         Enables or disables ACPI Heterogeneous Memory Attribute Table
@@ -1291,30 +1296,51 @@ SRST
         Enabling accel configures the host SMMUv3 in nested mode to support
         vfio-pci passthrough.
 
-     The following options are available when accel=on.
-     Note: 'auto' mode is not currently supported.
+    The following options will be set to auto by default if not manually
+    set. When accel=on and these properties are set to auto, the value is
+    derived from the host SMMUv3 capabilities via IOMMU_GET_HW_INFO. With
+    accel=on, this requires at least one cold-plugged vfio-pci device; if
+    none is present at machine init, QEMU will abort.
 
-    ``ril=on|off`` (default: on)
+    If accel=off, auto values resolve to the non-accel defaults given below.
+
+    ``ril=on|off|auto`` (default: auto)
         Support for Range Invalidation, which allows the SMMUv3 driver to
         invalidate TLB entries for a range of IOVAs at once instead of issuing
         separate commands to invalidate each page. Must match with host SMMUv3
         Range Invalidation support.
 
-    ``ats=on|off`` (default: off)
+        - With accel=off, auto is resolved to 'on'.
+
+    ``ats=on|off|auto`` (default: auto)
         Support for Address Translation Services, which enables PCIe devices to
         cache address translations in their local TLB and reduce latency. Host
         SMMUv3 must support ATS in order to enable this feature for the vIOMMU.
 
-    ``oas=val`` (supported values are 44 and 48. default: 44)
+        - With accel=off, auto is resolved to 'off'.
+
+    ``oas=val|auto`` (supported values are 44 and 48. default: auto)
         Sets the Output Address Size in bits. The value set here must be less
         than or equal to the host SMMUv3's supported OAS, so that the
         intermediate physical addresses (IPA) consumed by host SMMU for stage-2
         translation do not exceed the host's max supported IPA size.
 
-    ``ssidsize=val`` (val between 0 and 20. default: 0)
+        - With accel=off, auto is resolved to 44.
+
+    ``ssidsize=val|auto`` (val between 0 and 20. default: auto)
         Sets the Substream ID size in bits. When set to a non-zero value,
         PASID capability is advertised to the vIOMMU and accelerated use cases
         such as Shared Virtual Addressing (SVA) are supported.
+
+        - With accel=off, auto is resolved to 0.
+
+    ``cmdqv=on|off|auto`` (default: auto)
+        Enable hardware Command Queue Virtualization (CMDQV) for the
+        SMMUv3 command queue. Currently only the NVIDIA Tegra241 CMDQV
+        implementation is supported.
+
+        - With accel=on, auto means the value is automatically derived from the host SMMU.
+        - With accel=off, auto is resolved to 'off'.
 
 ``-device amd-iommu[,option=...]``
     Enables emulation of an AMD-Vi I/O Memory Management Unit (IOMMU).
@@ -1914,19 +1940,19 @@ ERST
 
 DEF("fsdev", HAS_ARG, QEMU_OPTION_fsdev,
     "-fsdev local,id=id,path=path,security_model=mapped-xattr|mapped-file|passthrough|none\n"
-    " [,writeout=immediate][,readonly=on][,fmode=fmode][,dmode=dmode]\n"
+    " [,writeout=immediate][,readonly=on][,fmode=fmode][,dmode=dmode][,max_xattr=max]\n"
     " [[,throttling.bps-total=b]|[[,throttling.bps-read=r][,throttling.bps-write=w]]]\n"
     " [[,throttling.iops-total=i]|[[,throttling.iops-read=r][,throttling.iops-write=w]]]\n"
     " [[,throttling.bps-total-max=bm]|[[,throttling.bps-read-max=rm][,throttling.bps-write-max=wm]]]\n"
     " [[,throttling.iops-total-max=im]|[[,throttling.iops-read-max=irm][,throttling.iops-write-max=iwm]]]\n"
     " [[,throttling.iops-size=is]]\n"
-    "-fsdev synth,id=id\n",
+    "-fsdev synth,id=id[,max_xattr=max]\n",
     QEMU_ARCH_ALL)
 
 SRST
-``-fsdev local,id=id,path=path,security_model=security_model [,writeout=writeout][,readonly=on][,fmode=fmode][,dmode=dmode] [,throttling.option=value[,throttling.option=value[,...]]]``
+``-fsdev local,id=id,path=path,security_model=security_model [,writeout=writeout][,readonly=on][,fmode=fmode][,dmode=dmode][,max_xattr=max] [,throttling.option=value[,throttling.option=value[,...]]]``
   \ 
-``-fsdev synth,id=id[,readonly=on]``
+``-fsdev synth,id=id[,readonly=on][,max_xattr=max]``
     Define a new file system device. Valid options are:
 
     ``local``
@@ -2000,6 +2026,12 @@ SRST
         Let every is bytes of a request count as a new request for iops
         throttling purposes.
 
+    ``max_xattr=max``
+        Specifies the maximum number of concurrent xattr FIDs allowed for
+        this export. The default is 1024. Set to 0 for allowing an infinite
+        number of xattr FIDs. This limit prevents host memory exhaustion
+        attacks by capping the number of simultaneous xattr FIDs.
+
     -fsdev option is used along with -device driver "virtio-9p-...".
 
 ``-device virtio-9p-type,fsdev=id,mount_tag=mount_tag``
@@ -2019,14 +2051,14 @@ ERST
 
 DEF("virtfs", HAS_ARG, QEMU_OPTION_virtfs,
     "-virtfs local,path=path,mount_tag=tag,security_model=mapped-xattr|mapped-file|passthrough|none\n"
-    "        [,id=id][,writeout=immediate][,readonly=on][,fmode=fmode][,dmode=dmode][,multidevs=remap|forbid|warn]\n"
-    "-virtfs synth,mount_tag=tag[,id=id][,readonly=on]\n",
+    "        [,id=id][,writeout=immediate][,readonly=on][,fmode=fmode][,dmode=dmode][,multidevs=remap|forbid|warn][,max_xattr=max]\n"
+    "-virtfs synth,mount_tag=tag[,id=id][,readonly=on][,max_xattr=max]\n",
     QEMU_ARCH_ALL)
 
 SRST
-``-virtfs local,path=path,mount_tag=mount_tag ,security_model=security_model[,writeout=writeout][,readonly=on] [,fmode=fmode][,dmode=dmode][,multidevs=multidevs]``
+``-virtfs local,path=path,mount_tag=mount_tag ,security_model=security_model[,writeout=writeout][,readonly=on] [,fmode=fmode][,dmode=dmode][,multidevs=multidevs][,max_xattr=max]``
   \ 
-``-virtfs synth,mount_tag=mount_tag``
+``-virtfs synth,mount_tag=mount_tag[,max_xattr=max]``
     Define a new virtual filesystem device and expose it to the guest using
     a virtio-9p-device (a.k.a. 9pfs), which essentially means that a certain
     directory on host is made directly accessible by guest as a pass-through
@@ -2091,6 +2123,12 @@ SRST
     ``mount_tag=mount_tag``
         Specifies the tag name to be used by the guest to mount this
         export point.
+
+    ``max_xattr=max``
+        Specifies the maximum number of concurrent xattr FIDs allowed for
+        this export. The default is 1024. Set to 0 for allowing an infinite
+        number of xattr FIDs. This limit prevents host memory exhaustion
+        attacks by capping the number of simultaneous xattr FIDs.
 
     ``multidevs=remap|forbid|warn``
         Specifies how to deal with multiple devices being shared with
@@ -3415,7 +3453,7 @@ SRST
 
     ``smb=dir[,smbserver=addr]``
         When using the user mode network stack, activate a built-in SMB
-        server so that Windows OSes can access to the host files in
+        server so that Windows OSes can access the host files in
         ``dir`` transparently. The IP address of the SMB server can be
         set to addr. By default the 4th IP in the guest network is used,
         i.e. x.x.x.4.
@@ -3424,11 +3462,20 @@ SRST
 
         ::
 
-            10.0.2.4 smbserver
+            10.0.2.4 smbserver #PRE #NOFNR
 
-        must be added in the file ``C:\WINDOWS\LMHOSTS`` (for windows
-        9x/Me) or ``C:\WINNT\SYSTEM32\DRIVERS\ETC\LMHOSTS`` (Windows
-        NT/2000).
+        must be added in the ``LMHOSTS`` file. In this line, ``#PRE``
+        requests pre-caching of the mapping, which speeds up the initial
+        connection on some Windows versions. ``#NOFNR`` is necessary for
+        Windows NT 3.1 to tell it not to send NBNS query packets that
+        QEMU does not handle, and is harmlessly ignored on other versions.
+
+        The ``LMHOSTS`` file may be in different locations depending on
+        the Windows version:
+
+        -  ``C:\WINDOWS\LMHOSTS`` for Windows 3x/9x/Me
+        -  ``C:\WINNT\SYSTEM32\DRIVERS\ETC\LMHOSTS`` for Windows NT/2000
+        -  ``C:\WINDOWS\SYSTEM32\DRIVERS\ETC\LMHOSTS`` for Windows XP and newer
 
         Then ``dir`` can be accessed in ``\\smbserver\qemu``.
 
@@ -4044,7 +4091,7 @@ DEF("chardev", HAS_ARG, QEMU_OPTION_chardev,
     "         [,logfile=PATH][,logappend=on|off]\n"
     "-chardev msmouse,id=id[,mux=on|off][,logfile=PATH][,logappend=on|off]\n"
     "-chardev vc,id=id[[,width=width][,height=height]][[,cols=cols][,rows=rows]]\n"
-    "         [,mux=on|off][,logfile=PATH][,logappend=on|off]\n"
+    "         [,mux=on|off][,logfile=PATH][,logappend=on|off][,encoding=ENCODING]\n"
     "-chardev ringbuf,id=id[,size=size][,logfile=PATH][,logappend=on|off]\n"
     "-chardev file,id=id,path=path[,input-path=input-file][,mux=on|off][,logfile=PATH][,logappend=on|off]\n"
     "-chardev pipe,id=id,path=path[,mux=on|off][,logfile=PATH][,logappend=on|off]\n"
@@ -4069,6 +4116,9 @@ DEF("chardev", HAS_ARG, QEMU_OPTION_chardev,
     "-chardev spicevmc,id=id,name=name[,debug=debug][,logfile=PATH][,logappend=on|off]\n"
     "-chardev spiceport,id=id,name=name[,debug=debug][,logfile=PATH][,logappend=on|off]\n"
 #endif
+#if defined(CONFIG_DBUS_DISPLAY)
+    "-chardev dbus,id=id,name=name[,mux=on|off][,logfile=PATH][,logappend=on|off]\n"
+#endif
     , QEMU_ARCH_ALL
 )
 
@@ -4079,8 +4129,8 @@ The general form of a character device option is:
     Backend is one of: ``null``, ``socket``, ``udp``, ``msmouse``, ``hub``,
     ``vc``, ``ringbuf``, ``file``, ``pipe``, ``console``, ``serial``,
     ``pty``, ``stdio``, ``braille``, ``parallel``,
-    ``spicevmc``, ``spiceport``. The specific backend will determine the
-    applicable options.
+    ``spicevmc``, ``spiceport``, ``dbus``. The specific backend will
+    determine the applicable options.
 
     Use ``-chardev help`` to print all available chardev backend types.
 
@@ -4104,7 +4154,7 @@ The general form of a character device option is:
     ::
 
         -chardev stdio,mux=on,id=char0 \
-        -mon chardev=char0,mode=readline \
+        -object monitor-hmp,id=hmp0,chardev=char0 \
         -serial chardev:char0 \
         -serial chardev:char0
 
@@ -4116,7 +4166,7 @@ The general form of a character device option is:
     ::
 
         -chardev stdio,mux=on,id=char0 \
-        -mon chardev=char0,mode=readline \
+        -object monitor-hmp,id=hmp0,chardev=char0 \
         -parallel chardev:char0 \
         -chardev tcp,...,mux=on,id=char1 \
         -serial chardev:char1 \
@@ -4276,15 +4326,27 @@ The available backends are:
     Several frontend devices is not supported. Stacking of multiplexers
     and hub devices is not supported as well.
 
-``-chardev vc,id=id[[,width=width][,height=height]][[,cols=cols][,rows=rows]]``
-    Connect to a QEMU text console. ``vc`` may optionally be given a
-    specific size.
+``-chardev vc,id=id[[,width=width][,height=height]][[,cols=cols][,rows=rows]][,encoding=ENCODING]``
+    Connect to a QEMU text console. The implementation and supported feature
+    set depend on the selected display backend.
+
+    - The GTK backend uses libvte for the emulation and display (when available).
+
+    - The D-Bus backend exports the character device as a Chardev object.
+
+    - spice-app backend exports it as a Spice port.
+
+    In other cases, QEMU uses its own emulated VT100, and ``vc`` may optionally be
+    given a specific size.
 
     ``width`` and ``height`` specify the width and height respectively
     of the console, in pixels.
 
     ``cols`` and ``rows`` specify that the console be sized to fit a
     text console with the given dimensions.
+
+    ``encoding`` specifies the character set expected from the guest:
+    ``utf8`` or ``cp437`` (8-bit Extended ASCII / VGA).
 
 ``-chardev ringbuf,id=id[,size=size]``
     Create a ring buffer with fixed size ``size``. size must be a power
@@ -4387,6 +4449,15 @@ The available backends are:
 
     Connect to a spice port, allowing a Spice client to handle the
     traffic identified by a name (preferably a fqdn).
+
+``-chardev dbus,id=id,name=name``
+    ``dbus`` is only available when D-Bus display support is built in.
+
+    ``name`` name of the chardev as exported on the D-Bus display
+    interface
+
+    Export the character device on the D-Bus display interface, so that
+    a D-Bus client can connect to it.
 ERST
 
 DEFHEADING()
@@ -4884,6 +4955,11 @@ SRST
     port). The default device is ``vc`` in graphical mode and ``stdio``
     in non graphical mode. Use ``-monitor none`` to disable the default
     monitor.
+
+    The use of ``-monitor dev`` is syntactic sugar for creating a character
+    device from ``dev`` and pairing it with ``-object monitor-hmp``.
+    Both the character device and monitor object will be given an ID
+    ``compat_monitorNNN`` where ``NNN`` is a counter starting from 0.
 ERST
 DEF("qmp", HAS_ARG, QEMU_OPTION_qmp, \
     "-qmp dev        like -monitor but opens in 'control' mode\n",
@@ -4895,9 +4971,10 @@ SRST
 
         -qmp tcp:localhost:4444,server=on,wait=off
 
-    Not all options are configurable via this syntax; for maximum
-    flexibility use the ``-mon`` option and an accompanying ``-chardev``.
-
+    The use of ``-qmp dev`` is syntactic sugar for creating a character
+    device from ``dev`` and pairing it with ``-object monitor-qmp``.
+    Both the character device and monitor object will be given an ID
+    ``compat_monitorNNN`` where ``NNN`` is a counter starting from 0.
 ERST
 DEF("qmp-pretty", HAS_ARG, QEMU_OPTION_qmp_pretty, \
     "-qmp-pretty dev like -qmp but uses pretty JSON formatting\n",
@@ -4926,6 +5003,16 @@ SRST
       -mon chardev=mon1,mode=control,pretty=on
 
     enables the QMP monitor on localhost port 4444 with pretty-printing.
+
+    The use of ``-mon mode=readline`` is deprecated syntactic sugar
+    for the new ``-object monitor-hmp`` option, each use of which
+    creates an object with the ID ``compat_monitorNNN`` where ``NNN`` is
+    a counter starting from 0.
+
+    The use of ``-mon mode=control`` is deprecated syntactic sugar
+    for the new ``-object monitor-qmp`` option, each use of which
+    creates an object with the ID ``compat_monitorNNN`` where ``NNN`` is
+    a counter starting from 0.
 ERST
 
 DEF("debugcon", HAS_ARG, QEMU_OPTION_debugcon, \
@@ -5092,7 +5179,7 @@ ERST
 
 DEF("enable-kvm", 0, QEMU_OPTION_enable_kvm, \
     "-enable-kvm     enable KVM full virtualization support\n",
-    QEMU_ARCH_ARM | QEMU_ARCH_I386 | QEMU_ARCH_MIPS | QEMU_ARCH_PPC |
+    QEMU_ARCH_ARM | QEMU_ARCH_I386 | QEMU_ARCH_PPC |
     QEMU_ARCH_RISCV | QEMU_ARCH_S390X)
 SRST
 ``-enable-kvm``
@@ -5484,7 +5571,7 @@ DEF("sandbox", HAS_ARG, QEMU_OPTION_sandbox, \
     "                    main QEMU process but will allow forks and execves to run unprivileged\n" \
     "                use 'spawn' to avoid QEMU to spawn new threads or processes by\n" \
     "                     blocking *fork and execve\n" \
-    "                use 'resourcecontrol' to disable process affinity and schedular priority\n",
+    "                use 'resourcecontrol' to disable process affinity and scheduler priority\n",
     QEMU_ARCH_ALL)
 SRST
 ``-sandbox arg[,obsolete=string][,elevateprivileges=string][,spawn=string][,resourcecontrol=string]``
@@ -5501,7 +5588,7 @@ SRST
         Disable \*fork and execve
 
     ``resourcecontrol=string``
-        Disable process affinity and schedular priority
+        Disable process affinity and scheduler priority
 ERST
 
 DEF("readconfig", HAS_ARG, QEMU_OPTION_readconfig,
@@ -5675,6 +5762,44 @@ SRST
     Create a new object of type typename setting properties in the order
     they are specified. Note that the 'id' property must be set. These
     objects are placed in the '/objects' path.
+
+    ``-object monitor-hmp,id=id,chardev=chardev_id,readline=on|off``
+        Set up a monitor running the Human Monitor Protocol,
+        connected to the chardev ``chardev_id``.
+
+        The ``id`` parameter is a unique ID that can be used
+        to dynamically delete the monitor at runtime. Note
+        that monitors created using the historical syntax
+        will be allocated IDs following the pattern ``compat_monmitorNNN``.
+        Mixing ``-object`` with ``-monitor`` syntax is discouraged.
+
+        The ``readline`` parameter, which defaults to ``on``,
+        controls whether the monitor provides line editing.
+
+    ``-object monitor-qmp,id=id,chardev=chardev_id,pretty=on|off,close-action=none|delete``
+        Set up a monitor running the QEMU Monitor Protocol,
+        connected to the chardev ``chardev_id``.
+
+        The ``id`` parameter is a unique ID that can be used
+        to dynamically delete the monitor at runtime. Note
+        that monitors created using the historical syntax
+        will be allocated IDs following the pattern ``compat_monitorNNN``.
+        Mixing ``-object`` with ``-qmp`` and ``-qmp-pretty``
+        syntax is discouraged.
+
+        The ``pretty`` parameter, which defaults to ``off``,
+        controls whether the monitor responses are pretty
+        printed as multi-line indented JSON, as opposed to
+        constrained to a single line without extraneous
+        whitespace.
+
+        The ``close-action`` parameter, which defaults to ``none``,
+        controls what happens when the connection to the monitor
+        is terminated by the user. If set to ``delete``, then the
+        ``monitor-qmp`` object and its associated character
+        device are both immediately deleted. This can be useful
+        if an extra monitor was hotplugged for a specific task
+        and should be unplugged when completed.
 
     ``-object memory-backend-file,id=id,size=size,mem-path=dir,share=on|off,discard-data=on|off,merge=on|off,dump=on|off,prealloc=on|off,host-nodes=host-nodes,policy=default|preferred|bind|interleave,align=align,offset=offset,readonly=on|off,rom=on|off|auto``
         Creates a memory file backend object, which can be used to back
@@ -6310,8 +6435,49 @@ SRST
              # |qemu_system_x86| \\
                  ...... \\
                  -object sev-guest,id=sev0,cbitpos=47,reduced-phys-bits=1 \\
-                 -machine ...,memory-encryption=sev0 \\
+                 -machine ...,confidential-guest-support=sev0 \\
                  .....
+
+    ``-object tdx-guest,id=id,[attributes=attrs,sept-ve-disable=on|off,mrconfigid=sha384_digest,mrowner=sha384_digest,mrownerconfig=sha384_digest,quote-generation-socket=socketaddr]``
+        Create an Intel Trusted Domain eXtensions (TDX) guest object, which is
+        the type of ``confidential-guest-support`` object. When pass the object
+        ID to machine's ``confidential-guest-support`` property, it can create
+        a TDX guest.
+
+        The ``attributes`` property is a 64-bit integer, which specifies the
+        TD attributes of the TD.
+
+        The ``sept-ve-disable`` property controls the bit 28 of TD attributes
+        specifically. When it's on, the EPT violation conversion to #VE on
+        guest access of PENDING pages is disabled. Some guest OS (e.g., Linux
+        TD guest) may require this to be set, otherwise they refuse to boot.
+        The default value is on.
+
+        The ``mrconfigid`` property is base64 encoded SHA384 digest, which
+        provides the ID for non-owner-defined configuration of the guest TD,
+        e.g., run-time or OS configuration. The default value is all zeros.
+
+        The ``mrowner`` property is base64 encoded SHA384 digest, which
+        provides the ID for guest TD's owner. The default value is all zeros.
+
+        The ``mrownerconfig`` property is base64 encoded SHA384 digest, which
+        provides the ID for owner-defined configuration of the guest TD, e.g.,
+        the configuration specific to the workload rather than the run-time of
+        OS. The default value is all zeros.
+
+        The ``quote-generation-socket`` property specifies the socket address
+        of the Quote Generation Service (QGS). QGS is a daemon running on the
+        host. QEMU forwards the <GetQuote> request from TD guest to QGS and
+        sents the reply (which contains generated QUOTE on success) from QGS
+        to guest TD.
+
+        .. parsed-literal::
+
+             # |qemu_system_x86| \\
+                 ...... \\
+                 -object '{"qom-type":"tdx-guest","id":"tdx","quote-generation-socket":{"type":"unix","path":"/var/run/qgs.socket"}}' \\
+                 -machine ...,confidential-guest-support=tdx \\
+                 ......
 
     ``-object igvm-cfg,file=file``
         Create an IGVM configuration object that defines the initial state

@@ -254,6 +254,8 @@ struct ChardevClass {
 
     bool internal; /* TODO: eventually use TYPE_USER_CREATABLE */
     bool supports_yank;
+    bool supports_size_opts;
+    bool supports_encoding_opts;
 
     /* parse command line options and populate QAPI @backend */
     void (*chr_parse)(QemuOpts *opts, ChardevBackend *backend, Error **errp);
@@ -329,5 +331,24 @@ void resume_mux_open(void);
 
 char *qemu_chr_get_pty_name(Chardev *chr);
 char *qemu_chr_get_filename(Chardev *chr);
+
+#define CHARDEV_VC_ENCODING_PROPERTY_DEFINE(cast_func)          \
+static int get_encoding(Object *obj, Error **errp)              \
+{                                                               \
+    return cast_func(obj)->encoding;                            \
+}                                                               \
+                                                                \
+static void set_encoding(Object *obj, int value, Error **errp)  \
+{                                                               \
+    cast_func(obj)->encoding = value;                           \
+}
+
+static inline void chardev_vc_add_encoding_prop(ObjectClass *oc,
+    int (*get)(Object *, Error **),
+    void (*set)(Object *, int, Error **))
+{
+    object_class_property_add_enum(oc, "encoding", "ChardevVCEncoding",
+                                   &ChardevVCEncoding_lookup, get, set);
+}
 
 #endif

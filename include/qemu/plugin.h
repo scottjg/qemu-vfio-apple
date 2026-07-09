@@ -55,9 +55,7 @@ void qemu_plugin_opt_parse(const char *optstr, QemuPluginList *head);
 int qemu_plugin_load_list(QemuPluginList *head, Error **errp);
 
 union qemu_plugin_cb_sig {
-    qemu_plugin_simple_cb_t              simple;
     qemu_plugin_udata_cb_t               udata;
-    qemu_plugin_vcpu_simple_cb_t         vcpu_simple;
     qemu_plugin_vcpu_udata_cb_t          vcpu_udata;
     qemu_plugin_vcpu_discon_cb_t         vcpu_discon;
     qemu_plugin_vcpu_tb_trans_cb_t       vcpu_tb_trans;
@@ -174,7 +172,7 @@ bool
 qemu_plugin_vcpu_syscall_filter(CPUState *cpu, int64_t num, uint64_t a1,
                                 uint64_t a2, uint64_t a3, uint64_t a4,
                                 uint64_t a5, uint64_t a6, uint64_t a7,
-                                uint64_t a8, uint64_t *sysret);
+                                uint64_t a8, int64_t *sysret);
 
 void qemu_plugin_vcpu_mem_cb(CPUState *cpu, uint64_t vaddr,
                              uint64_t value_low,
@@ -290,7 +288,7 @@ static inline bool
 qemu_plugin_vcpu_syscall_filter(CPUState *cpu, int64_t num, uint64_t a1,
                                 uint64_t a2, uint64_t a3, uint64_t a4,
                                 uint64_t a5, uint64_t a6, uint64_t a7,
-                                uint64_t a8, uint64_t *sysret)
+                                uint64_t a8, int64_t *sysret)
 {
     return false;
 }

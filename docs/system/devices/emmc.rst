@@ -53,3 +53,26 @@ SDHCI controllers while assuming that the firmware needs a boot partitions of
     -drive file=emmc.img,if=none,format=raw,id=emmc-img
     -device sdhci-pci
     -device emmc,drive=emmc-img,boot-partition-size=1048576,rpmb-partition-size=2097152
+
+RPMB Authentication Key
+=======================
+
+A private shared key is used for authenticating requests of the host to the
+RPMB. A real eMMC stores this persistently and permits no reprogramming once it
+is set. QEMU emulates key programming but does not persist the key state
+across restarts. To emulate the state "key is set", the eMMC can be created
+with a user-provided key via the ``auth-key`` property:
+
+.. code-block:: console
+
+    -device emmc,[...],auth-key=D3EB3EC36E334C9F988CE2C0B85954610D2BCF8664844DF2AB56E6C61BB701E4
+
+This sets the well-known test key of OP-TEE on emmc device creation. In case an
+eMMC is instantiated by the machine model already:
+
+.. code-block:: console
+
+    -global emmc.auth-key=D3EB3EC36E334C9F988CE2C0B85954610D2BCF8664844DF2AB56E6C61BB701E4
+
+A key always consists of 32 bytes that have to be encoded as hex numbers,
+left-padding with zeros as needed.

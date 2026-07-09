@@ -32,7 +32,9 @@ typedef struct MMUContext {
 
 static inline bool cpu_has_ptw(CPULoongArchState *env)
 {
-    return !!FIELD_EX64(env->CSR_PWCH, CSR_PWCH, HPTW_EN);
+    CPUSysState *sys = env_sys(env);
+
+    return !!FIELD_EX64(sys->CSR_PWCH, CSR_PWCH, HPTW_EN);
 }
 
 static inline bool pte_present(CPULoongArchState *env, uint64_t entry)
@@ -97,7 +99,7 @@ TLBRet loongarch_ptw(CPULoongArchState *env, MMUContext *context,
                      int access_type, int mmu_idx, int debug);
 void get_dir_base_width(CPULoongArchState *env, uint64_t *dir_base,
                         uint64_t *dir_width, unsigned int level);
-hwaddr loongarch_cpu_get_phys_page_debug(CPUState *cpu, vaddr addr);
+hwaddr loongarch_cpu_get_phys_addr_debug(CPUState *cpu, vaddr addr);
 uint64_t loongarch_palen_mask(CPULoongArchState *env);
 
 #endif  /* LOONGARCH_CPU_MMU_H */

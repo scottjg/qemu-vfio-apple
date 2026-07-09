@@ -31,8 +31,10 @@
 #include "qemu/osdep.h"
 #include "cpu.h"
 #include "s390x-internal.h"
-#include "tcg/tcg-op.h"
-#include "tcg/tcg-op-gvec.h"
+#define TCG_ADDRESS_BITS 64
+#include "tcg/tcg-op-common.h"
+#include "tcg/tcg-op-mem.h"
+#include "tcg/tcg-op-gvec-common.h"
 #include "qemu/log.h"
 #include "qemu/host-utils.h"
 #include "exec/helper-proto.h"

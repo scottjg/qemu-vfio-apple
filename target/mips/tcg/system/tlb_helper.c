@@ -26,6 +26,7 @@
 #include "exec/page-protection.h"
 #include "exec/target_page.h"
 #include "accel/tcg/cpu-ldst.h"
+#include "accel/tcg/cpu-loop.h"
 #include "exec/log.h"
 #include "exec/helper-proto.h"
 
@@ -346,15 +347,14 @@ void helper_ginvt(CPUMIPSState *env, target_ulong arg, uint32_t type)
     uint32_t invMsgVPN2 = arg & (TARGET_PAGE_MASK << 1);
     uint8_t invMsgR = 0;
     uint32_t invMsgMMid = env->CP0_MemoryMapID;
-    CPUState *other_cs = first_cpu;
+    CPUState *cpu;
 
 #ifdef TARGET_MIPS64
     invMsgR = extract64(arg, 62, 2);
 #endif
 
-    CPU_FOREACH(other_cs) {
-        MIPSCPU *other_cpu = MIPS_CPU(other_cs);
-        global_invalidate_tlb(&other_cpu->env, invMsgVPN2, invMsgR, invMsgMMid,
+    CPU_FOREACH(cpu) {
+        global_invalidate_tlb(cpu_env(cpu), invMsgVPN2, invMsgR, invMsgMMid,
                               invAll, invVAMMid, invMMid, invVA);
     }
 }
@@ -999,16 +999,22 @@ static void set_hflags_for_handler(CPUMIPSState *env)
 
 static inline void set_badinstr_registers(CPUMIPSState *env)
 {
+    CPUState *cs = env_cpu(env);
+    MemOpIdx oi;
+
     if (env->insn_flags & ISA_NANOMIPS32) {
         if (env->CP0_Config3 & (1 << CP0C3_BI)) {
-            uint32_t instr = (cpu_lduw_code(env, env->active_tc.PC)) << 16;
+            uint32_t instr;
+
+            oi = make_memop_idx(mo_endian_env(env) | MO_UW, cpu_mmu_index(cs, true));
+            instr =  cpu_ldw_code_mmu(env, env->active_tc.PC, oi, 0) << 16;
             if ((instr & 0x10000000) == 0) {
-                instr |= cpu_lduw_code(env, env->active_tc.PC + 2);
+                instr |= cpu_ldw_code_mmu(env, env->active_tc.PC + 2, oi, 0);
             }
             env->CP0_BadInstr = instr;
 
             if ((instr & 0xFC000000) == 0x60000000) {
-                instr = cpu_lduw_code(env, env->active_tc.PC + 4) << 16;
+                instr =  cpu_ldw_code_mmu(env, env->active_tc.PC + 4, oi, 0) << 16;
                 env->CP0_BadInstrX = instr;
             }
         }
@@ -1019,12 +1025,14 @@ static inline void set_badinstr_registers(CPUMIPSState *env)
         /* TODO: add BadInstr support for microMIPS */
         return;
     }
+
+    oi = make_memop_idx(mo_endian_env(env) | MO_UL, cpu_mmu_index(cs, true));
     if (env->CP0_Config3 & (1 << CP0C3_BI)) {
-        env->CP0_BadInstr = cpu_ldl_code(env, env->active_tc.PC);
+        env->CP0_BadInstr = cpu_ldl_code_mmu(env, env->active_tc.PC, oi, 0);
     }
     if ((env->CP0_Config3 & (1 << CP0C3_BP)) &&
         (env->hflags & MIPS_HFLAG_BMASK)) {
-        env->CP0_BadInstrP = cpu_ldl_code(env, env->active_tc.PC - 4);
+        env->CP0_BadInstrP = cpu_ldl_code_mmu(env, env->active_tc.PC - 4, oi, 0);
     }
 }
 

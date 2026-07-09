@@ -224,12 +224,12 @@ static bool bochs_display_update(void *opaque)
                                              mode.format,
                                              mode.stride,
                                              ptr + mode.offset);
-        dpy_gfx_replace_surface(s->con, ds);
+        qemu_console_set_surface(s->con, ds);
         full_update = true;
     }
 
     if (full_update) {
-        dpy_gfx_update_full(s->con);
+        qemu_console_update_full(s->con);
     } else {
         snap = memory_region_snapshot_and_clear_dirty(&s->vram,
                                                       mode.offset, mode.size,
@@ -243,14 +243,12 @@ static bool bochs_display_update(void *opaque)
                 ys = y;
             }
             if (!dirty && ys >= 0) {
-                dpy_gfx_update(s->con, 0, ys,
-                               mode.width, y - ys);
+                qemu_console_update(s->con, 0, ys, mode.width, y - ys);
                 ys = -1;
             }
         }
         if (ys >= 0) {
-            dpy_gfx_update(s->con, 0, ys,
-                           mode.width, y - ys);
+            qemu_console_update(s->con, 0, ys, mode.width, y - ys);
         }
 
         g_free(snap);
@@ -279,7 +277,7 @@ static void bochs_display_realize(PCIDevice *dev, Error **errp)
     }
     s->vgamem = pow2ceil(s->vgamem);
 
-    s->con = graphic_console_init(DEVICE(dev), 0, &bochs_display_gfx_ops, s);
+    s->con = qemu_graphic_console_create(DEVICE(dev), 0, &bochs_display_gfx_ops, s);
 
     memory_region_init_ram(&s->vram, obj, "bochs-display-vram", s->vgamem,
                            &error_fatal);
@@ -344,7 +342,7 @@ static void bochs_display_exit(PCIDevice *dev)
 {
     BochsDisplayState *s = BOCHS_DISPLAY(dev);
 
-    graphic_console_close(s->con);
+    qemu_graphic_console_close(s->con);
 }
 
 static const Property bochs_display_properties[] = {

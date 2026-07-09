@@ -449,7 +449,7 @@ static void arm_gic_realize(DeviceState *dev, Error **errp)
 
     gicv3_init_irqs_and_mmio(s, gicv3_set_irq, gic_ops);
 
-    gicv3_init_cpuif(s);
+    gicv3_init_cpuif(s, errp);
 }
 
 static void arm_gicv3_class_init(ObjectClass *klass, const void *data)

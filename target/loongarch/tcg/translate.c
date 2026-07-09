@@ -149,6 +149,7 @@ static void loongarch_tr_init_disas_context(DisasContextBase *dcbase,
 
     ctx->cpucfg1 = env->cpucfg[1];
     ctx->cpucfg2 = env->cpucfg[2];
+    ctx->cpucfg3 = env->cpucfg[3];
 }
 
 static void loongarch_tr_tb_start(DisasContextBase *dcbase, CPUState *cs)

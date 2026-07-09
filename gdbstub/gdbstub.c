@@ -72,9 +72,9 @@ void gdb_init_gdbserver_state(void)
      * By default try to use no IRQs and no timers while single
      * stepping so as to make single stepping like a typical ICE HW step.
      */
-    gdbserver_state.supported_sstep_flags = accel_supported_gdbstub_sstep_flags();
+    gdbserver_state.accel_config = current_accel()->gdbstub;
     gdbserver_state.sstep_flags = SSTEP_ENABLE | SSTEP_NOIRQ | SSTEP_NOTIMER;
-    gdbserver_state.sstep_flags &= gdbserver_state.supported_sstep_flags;
+    gdbserver_state.sstep_flags &= gdbserver_state.accel_config.sstep_flags;
 }
 
 /* writes 2*len+1 bytes in buf */
@@ -578,7 +578,7 @@ static void gdb_register_feature(CPUState *cpu, int base_reg,
 
 static const char *gdb_get_core_xml_file(CPUState *cpu)
 {
-    CPUClass *cc = cpu->cc;
+    const CPUClass *cc = cpu->cc;
 
     /*
      * The CPU class can provide the XML filename via a method,
@@ -1369,14 +1369,16 @@ static void handle_step(GArray *params, void *user_ctx)
         gdb_set_cpu_pc(gdb_get_cmd_param(params, 0)->val_ull);
     }
 
+    trace_gdbstub_op_stepping(gdbserver_state.c_cpu->cpu_index);
     cpu_single_step(gdbserver_state.c_cpu, gdbserver_state.sstep_flags);
     gdb_continue();
 }
 
 static void handle_backward(GArray *params, void *user_ctx)
 {
-    if (!gdb_can_reverse()) {
+    if (!gdbserver_state.accel_config.can_reverse) {
         gdb_put_packet("E22");
+        return;
     }
     if (params->len == 1) {
         switch (gdb_get_cmd_param(params, 0)->opcode) {
@@ -1535,12 +1537,12 @@ static void handle_query_qemu_sstepbits(GArray *params, void *user_ctx)
 {
     g_string_printf(gdbserver_state.str_buf, "ENABLE=%x", SSTEP_ENABLE);
 
-    if (gdbserver_state.supported_sstep_flags & SSTEP_NOIRQ) {
+    if (gdbserver_state.accel_config.sstep_flags & SSTEP_NOIRQ) {
         g_string_append_printf(gdbserver_state.str_buf, ",NOIRQ=%x",
                                SSTEP_NOIRQ);
     }
 
-    if (gdbserver_state.supported_sstep_flags & SSTEP_NOTIMER) {
+    if (gdbserver_state.accel_config.sstep_flags & SSTEP_NOTIMER) {
         g_string_append_printf(gdbserver_state.str_buf, ",NOTIMER=%x",
                                SSTEP_NOTIMER);
     }
@@ -1558,7 +1560,7 @@ static void handle_set_qemu_sstep(GArray *params, void *user_ctx)
 
     new_sstep_flags = gdb_get_cmd_param(params, 0)->val_ul;
 
-    if (new_sstep_flags  & ~gdbserver_state.supported_sstep_flags) {
+    if (new_sstep_flags & ~gdbserver_state.accel_config.sstep_flags) {
         gdb_put_packet("E22");
         return;
     }
@@ -1682,7 +1684,7 @@ static void handle_query_supported(GArray *params, void *user_ctx)
         g_string_append(gdbserver_state.str_buf, ";qXfer:features:read+");
     }
 
-    if (gdb_can_reverse()) {
+    if (gdbserver_state.accel_config.can_reverse) {
         g_string_append(gdbserver_state.str_buf,
             ";ReverseStep+;ReverseContinue+");
     }

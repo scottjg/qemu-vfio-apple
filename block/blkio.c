@@ -124,7 +124,7 @@ blkio_do_alloc_bounce_buffer(BDRVBlkioState *s, BlkioBounceBuf *bounce,
                              int64_t bytes)
 {
     void *addr = s->bounce_pool.addr;
-    BlkioBounceBuf *cur = NULL;
+    BlkioBounceBuf *cur;
     BlkioBounceBuf *prev = NULL;
     ptrdiff_t space;
 

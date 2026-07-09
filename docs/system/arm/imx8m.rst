@@ -18,6 +18,7 @@ following devices:
  * 1 Designware PCI Express Controller
  * 1 Ethernet Controller
  * 2 Designware USB 3 Controllers
+ * 2 FlexCAN 3 CAN Controllers (``imx8mp-evk`` only)
  * 5 GPIO Controllers
  * 6 I2C Controllers
  * 3 SPI Controllers

@@ -247,7 +247,7 @@ struct whpx_register_set {
  *          e. Let the affected CPU run in the exclusive mode.
  *          f. Restore the original handler and the exception exit bitmap.
  *        Note that handling all corner cases related to IDT/GDT is harder
- *        than it may seem. See x86_cpu_get_phys_page_attrs_debug() for a
+ *        than it may seem. See x86_cpu_translate_for_debug() for a
  *        rough idea.
  *
  *     3. In order to properly support guest-level debugging in parallel with
@@ -1853,11 +1853,6 @@ void whpx_apply_breakpoints(
     }
 }
 
-bool whpx_arch_supports_guest_debug(void) 
-{
-    return true;
-}
-
 void whpx_arch_destroy_vcpu(CPUState *cpu)
 {
     X86CPU *x86cpu = X86_CPU(cpu);
@@ -2271,7 +2266,7 @@ int whpx_vcpu_run(CPUState *cpu)
             }
         }
 
-        if (exclusive_step_mode != WHPX_STEP_NONE || cpu->singlestep_enabled) {
+        if (exclusive_step_mode != WHPX_STEP_NONE || cpu_single_stepping(cpu)) {
             whpx_vcpu_configure_single_stepping(cpu, true, NULL);
         }
 
@@ -2288,7 +2283,7 @@ int whpx_vcpu_run(CPUState *cpu)
             break;
         }
 
-        if (exclusive_step_mode != WHPX_STEP_NONE || cpu->singlestep_enabled) {
+        if (exclusive_step_mode != WHPX_STEP_NONE || cpu_single_stepping(cpu)) {
             whpx_vcpu_configure_single_stepping(cpu,
                 false,
                 &vcpu->exit_ctx.VpContext.Rflags);
@@ -2653,7 +2648,7 @@ int whpx_vcpu_run(CPUState *cpu)
                 cpu->exception_index = EXCP_DEBUG;
             } else if ((vcpu->exit_ctx.VpException.ExceptionType ==
                         WHvX64ExceptionTypeDebugTrapOrFault) &&
-                       !cpu->singlestep_enabled) {
+                       !cpu_single_stepping(cpu)) {
                 /*
                  * Just finished stepping over a breakpoint, but the
                  * gdb does not expect us to do single-stepping.
@@ -3342,6 +3337,8 @@ int whpx_accel_init(AccelState *as, MachineState *ms)
 
     whpx_memory_init();
     whpx_init_emu();
+
+    as->gdbstub.sstep_flags = SSTEP_ENABLE;
 
     return 0;
 

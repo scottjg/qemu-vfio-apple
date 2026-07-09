@@ -169,6 +169,32 @@ extern const PropertyInfo qdev_prop_link;
     DEFINE_PROP(_name, _state, _field, qdev_prop_link, _ptr_type,     \
                 .link_type  = _type)
 
+/**
+ * DEFINE_PROP_LINK_ARRAY:
+ * @_name: name of the array
+ * @_state: name of the device state structure type
+ * @_field: uint32_t field in @_state to hold the array length
+ * @_arrayfield: field in @_state (of type '@_arraytype *') which
+ *               will point to the array
+ * @_linktype: QOM type name of the link type
+ * @_arraytype: C type of the array elements
+ *
+ * Define device properties for a variable-length array _name of links
+ * (i.e. this is the array version of DEFINE_PROP_LINK).
+ *
+ * The array is represented as a list of QStrings in the visitor interface,
+ * where each string is the QOM path of the object to be linked.
+ */
+#define DEFINE_PROP_LINK_ARRAY(_name, _state, _field, _arrayfield,      \
+                               _linktype, _arraytype)                   \
+    DEFINE_PROP(_name, _state, _field, qdev_prop_array, uint32_t,       \
+                .set_default = true,                                    \
+                .defval.u = 0,                                          \
+                .arrayinfo = &qdev_prop_link,                           \
+                .arrayfieldsize = sizeof(_arraytype),                   \
+                .arrayoffset = offsetof(_state, _arrayfield),           \
+                .link_type = _linktype)
+
 #define DEFINE_PROP_UINT8(_n, _s, _f, _d)                       \
     DEFINE_PROP_UNSIGNED(_n, _s, _f, _d, qdev_prop_uint8, uint8_t)
 #define DEFINE_PROP_UINT16(_n, _s, _f, _d)                      \
@@ -219,6 +245,21 @@ void qdev_prop_set_enum(DeviceState *dev, const char *name, int value);
 
 /* Takes ownership of @values */
 void qdev_prop_set_array(DeviceState *dev, const char *name, QList *values);
+
+/**
+ * qlist_append_link: Add a QOM object to a QList of link properties
+ * @qlist: list to append to
+ * @obj: object to append
+ *
+ * This is a helper function for constructing a QList to pass to
+ * qdev_prop_set_array() when the qdev property array is an array of
+ * link properties (i.e. one defined with DEFINE_PROP_LINK_ARRAY).
+ *
+ * The object is encoded into the list as a QString which is the
+ * canonical path of the object; this is the same encoding that
+ * object_set_link_property() and object_get_link_property() use.
+ */
+void qlist_append_link(QList *qlist, Object *obj);
 
 void *object_field_prop_ptr(Object *obj, const Property *prop);
 

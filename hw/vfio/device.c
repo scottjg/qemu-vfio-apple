@@ -25,7 +25,6 @@
 #include "hw/vfio/pci.h"
 #include "hw/vfio/vfio-region.h"
 #include "hw/core/iommu.h"
-#include "hw/core/hw-error.h"
 #include "trace.h"
 #include "qapi/error.h"
 #include "qemu/error-report.h"
@@ -561,6 +560,17 @@ bool vfio_device_get_viommu_flags_want_nesting(VFIODevice *vbasedev)
     if (vdev) {
         return !!(pci_device_get_viommu_flags(PCI_DEVICE(vdev)) &
                   VIOMMU_FLAG_WANT_NESTING_PARENT);
+    }
+    return false;
+}
+
+bool vfio_device_get_viommu_flags_want_pasid_attach(VFIODevice *vbasedev)
+{
+    VFIOPCIDevice *vdev = vfio_pci_from_vfio_device(vbasedev);
+
+    if (vdev) {
+        return !!(pci_device_get_viommu_flags(PCI_DEVICE(vdev)) &
+                  VIOMMU_FLAG_WANT_PASID_ATTACH);
     }
     return false;
 }

@@ -32,6 +32,7 @@
 #endif
 #include "qemu/log.h"
 #ifdef CONFIG_TCG
+#include "accel/tcg/cpu-loop.h"
 #include "tcg/insn-start-words.h"
 #endif
 
@@ -252,8 +253,8 @@ void cpu_x86_update_cr4(CPUX86State *env, uint32_t new_cr4)
 }
 
 #if !defined(CONFIG_USER_ONLY)
-hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cs, vaddr addr,
-                                         MemTxAttrs *attrs)
+bool x86_cpu_translate_for_debug(CPUState *cs, vaddr addr,
+                                 TranslateForDebugResult *result)
 {
     X86CPU *cpu = X86_CPU(cs);
     CPUX86State *env = &cpu->env;
@@ -262,8 +263,6 @@ hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cs, vaddr addr,
     int32_t a20_mask;
     uint32_t page_offset;
     int page_size;
-
-    *attrs = cpu_get_mem_attrs(env);
 
     a20_mask = x86_get_a20_mask(env);
     if (!(env->cr[0] & CR0_PG_MASK)) {
@@ -283,7 +282,7 @@ hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cs, vaddr addr,
             /* test virtual address sign extension */
             sext = la57 ? (int64_t)addr >> 56 : (int64_t)addr >> 47;
             if (sext != 0 && sext != -1) {
-                return -1;
+                return false;
             }
 
             if (la57) {
@@ -291,7 +290,7 @@ hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cs, vaddr addr,
                         (((addr >> 48) & 0x1ff) << 3)) & a20_mask;
                 pml5e = x86_ldq_phys(cs, pml5e_addr);
                 if (!(pml5e & PG_PRESENT_MASK)) {
-                    return -1;
+                    return false;
                 }
             } else {
                 pml5e = env->cr[3];
@@ -301,13 +300,13 @@ hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cs, vaddr addr,
                     (((addr >> 39) & 0x1ff) << 3)) & a20_mask;
             pml4e = x86_ldq_phys(cs, pml4e_addr);
             if (!(pml4e & PG_PRESENT_MASK)) {
-                return -1;
+                return false;
             }
             pdpe_addr = ((pml4e & PG_ADDRESS_MASK) +
                          (((addr >> 30) & 0x1ff) << 3)) & a20_mask;
             pdpe = x86_ldq_phys(cs, pdpe_addr);
             if (!(pdpe & PG_PRESENT_MASK)) {
-                return -1;
+                return false;
             }
             if (pdpe & PG_PSE_MASK) {
                 page_size = 1024 * 1024 * 1024;
@@ -322,14 +321,14 @@ hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cs, vaddr addr,
                 a20_mask;
             pdpe = x86_ldq_phys(cs, pdpe_addr);
             if (!(pdpe & PG_PRESENT_MASK))
-                return -1;
+                return false;
         }
 
         pde_addr = ((pdpe & PG_ADDRESS_MASK) +
                     (((addr >> 21) & 0x1ff) << 3)) & a20_mask;
         pde = x86_ldq_phys(cs, pde_addr);
         if (!(pde & PG_PRESENT_MASK)) {
-            return -1;
+            return false;
         }
         if (pde & PG_PSE_MASK) {
             /* 2 MB page */
@@ -343,7 +342,7 @@ hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cs, vaddr addr,
             pte = x86_ldq_phys(cs, pte_addr);
         }
         if (!(pte & PG_PRESENT_MASK)) {
-            return -1;
+            return false;
         }
     } else {
         uint32_t pde;
@@ -352,7 +351,7 @@ hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cs, vaddr addr,
         pde_addr = ((env->cr[3] & ~0xfff) + ((addr >> 20) & 0xffc)) & a20_mask;
         pde = x86_ldl_phys(cs, pde_addr);
         if (!(pde & PG_PRESENT_MASK))
-            return -1;
+            return false;
         if ((pde & PG_PSE_MASK) && (env->cr[4] & CR4_PSE_MASK)) {
             pte = pde | ((pde & 0x1fe000LL) << (32 - 13));
             page_size = 4096 * 1024;
@@ -361,7 +360,7 @@ hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cs, vaddr addr,
             pte_addr = ((pde & ~0xfff) + ((addr >> 10) & 0xffc)) & a20_mask;
             pte = x86_ldl_phys(cs, pte_addr);
             if (!(pte & PG_PRESENT_MASK)) {
-                return -1;
+                return false;
             }
             page_size = 4096;
         }
@@ -372,8 +371,13 @@ hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cs, vaddr addr,
 out:
 #endif
     pte &= PG_ADDRESS_MASK & ~(page_size - 1);
-    page_offset = (addr & TARGET_PAGE_MASK) & (page_size - 1);
-    return pte | page_offset;
+    page_offset = addr & (page_size - 1);
+
+    result->attrs = cpu_get_mem_attrs(env);
+    result->attrs.debug = 1;
+    result->physaddr = pte | page_offset;
+    result->lg_page_size = ctz64(page_size);
+    return true;
 }
 
 typedef struct MCEInjectionParams {
@@ -563,7 +567,7 @@ void cpu_report_tpr_access(CPUX86State *env, TPRAccess access)
     X86CPU *cpu = env_archcpu(env);
     CPUState *cs = env_cpu(env);
 
-    if (kvm_enabled() || whpx_enabled() || nvmm_enabled()) {
+    if (kvm_enabled() || whpx_enabled() || nvmm_enabled() || hvf_enabled()) {
         env->tpr_access_type = access;
 
         cpu_interrupt(cs, CPU_INTERRUPT_TPR);

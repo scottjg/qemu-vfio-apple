@@ -29,11 +29,11 @@
 #include "qemu/target-info.h"
 #include "exec/log.h"
 #include "exec/icount.h"
+#include "accel/tcg/cpu-loop.h"
 #include "accel/tcg/cpu-ops.h"
 #include "tb-jmp-cache.h"
 #include "tb-hash.h"
 #include "tb-context.h"
-#include "tb-internal.h"
 #include "internal-common.h"
 #include "tcg/perf.h"
 #include "tcg/insn-start-words.h"
@@ -575,7 +575,7 @@ void tb_check_watchpoint(CPUState *cpu, uintptr_t retaddr)
 void cpu_io_recompile(CPUState *cpu, uintptr_t retaddr)
 {
     TranslationBlock *tb;
-    CPUClass *cc;
+    const CPUClass *cc = cpu->cc;
     uint32_t n;
 
     tb = tcg_tb_lookup(retaddr);
@@ -591,7 +591,6 @@ void cpu_io_recompile(CPUState *cpu, uintptr_t retaddr)
      * to account for the re-execution of the branch.
      */
     n = 1;
-    cc = cpu->cc;
     if (cc->tcg_ops->io_recompile_replay_branch &&
         cc->tcg_ops->io_recompile_replay_branch(cpu, tb)) {
         cpu->neg.icount_decr.u16.low++;

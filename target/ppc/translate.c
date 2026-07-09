@@ -198,7 +198,7 @@ struct DisasContext {
     bool pmu_insn_cnt;
     bool bhrb_enable;
     ppc_spr_t *spr_cb; /* Needed to check rights for mfspr/mtspr */
-    int singlestep_enabled;
+    int singlestep_flags;
     uint32_t flags;
     uint64_t insns_flags;
     uint64_t insns_flags2;
@@ -367,7 +367,7 @@ static void gen_debug_exception(DisasContext *ctx, bool rfi_type)
 #if !defined(CONFIG_USER_ONLY)
     if (ctx->flags & POWERPC_FLAG_DE) {
         target_ulong dbsr = 0;
-        if (ctx->singlestep_enabled & CPU_SINGLE_STEP) {
+        if (ctx->singlestep_flags & CPU_SINGLE_STEP) {
             dbsr = DBCR0_ICMP;
         } else {
             /* Must have been branch */
@@ -3645,7 +3645,7 @@ static void pmu_count_insns(DisasContext *ctx)
 
 static inline bool use_goto_tb(DisasContext *ctx, target_ulong dest)
 {
-    if (unlikely(ctx->singlestep_enabled)) {
+    if (unlikely(ctx->singlestep_flags)) {
         return false;
     }
     return translator_use_goto_tb(&ctx->base, dest);
@@ -3653,7 +3653,7 @@ static inline bool use_goto_tb(DisasContext *ctx, target_ulong dest)
 
 static void gen_lookup_and_goto_ptr(DisasContext *ctx)
 {
-    if (unlikely(ctx->singlestep_enabled)) {
+    if (unlikely(ctx->singlestep_flags)) {
         gen_debug_exception(ctx, false);
     } else {
         /*
@@ -6559,13 +6559,13 @@ static void ppc_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cs)
     ctx->pmu_insn_cnt = (hflags >> HFLAGS_INSN_CNT) & 1;
     ctx->bhrb_enable = (hflags >> HFLAGS_BHRB_ENABLE) & 1;
 
-    ctx->singlestep_enabled = 0;
+    ctx->singlestep_flags = 0;
     if ((hflags >> HFLAGS_SE) & 1) {
-        ctx->singlestep_enabled |= CPU_SINGLE_STEP;
+        ctx->singlestep_flags |= CPU_SINGLE_STEP;
         ctx->base.max_insns = 1;
     }
     if ((hflags >> HFLAGS_BE) & 1) {
-        ctx->singlestep_enabled |= CPU_BRANCH_STEP;
+        ctx->singlestep_flags |= CPU_BRANCH_STEP;
     }
 }
 
@@ -6641,7 +6641,7 @@ static void ppc_tr_tb_stop(DisasContextBase *dcbase, CPUState *cs)
     }
 
     /* Honor single stepping. */
-    if (unlikely(ctx->singlestep_enabled & CPU_SINGLE_STEP)) {
+    if (unlikely(ctx->singlestep_flags & CPU_SINGLE_STEP)) {
         bool rfi_type = false;
 
         switch (is_jmp) {

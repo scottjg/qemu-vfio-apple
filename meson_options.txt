@@ -119,6 +119,8 @@ option('vfio_user_server', type: 'feature', value: 'disabled',
        description: 'vfio-user server support')
 option('dbus_display', type: 'feature', value: 'auto',
        description: '-display dbus support')
+option('qemu_vnc', type: 'feature', value: 'auto',
+       description: 'standalone VNC server over D-Bus')
 option('tpm', type : 'feature', value : 'auto',
        description: 'TPM support')
 option('valgrind', type : 'feature', value: 'auto',
@@ -158,8 +160,6 @@ option('curl', type : 'feature', value : 'auto',
        description: 'CURL block device driver')
 option('gio', type : 'feature', value : 'auto',
        description: 'use libgio for D-Bus support')
-option('glusterfs', type : 'feature', value : 'auto',
-       description: 'Glusterfs block device driver')
 option('hv_balloon', type : 'feature', value : 'auto',
        description: 'hv-balloon driver (requires Glib 2.68+ GTree API)')
 option('libdw', type : 'feature', value : 'auto',

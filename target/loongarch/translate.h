@@ -43,6 +43,8 @@
 #define avail_LLACQ_SCREL(C)    (FIELD_EX32((C)->cpucfg2, CPUCFG2, LLACQ_SCREL))
 #define avail_LLACQ_SCREL_64(C) (avail_64(C) && avail_LLACQ_SCREL(C))
 
+#define avail_DBAR_HINT(C) (FIELD_EX32((C)->cpucfg3, CPUCFG3, DBAR_HINTS))
+
 /*
  * If an operation is being performed on less than TARGET_LONG_BITS,
  * it may require the inputs to be sign- or zero-extended; which will
@@ -66,6 +68,7 @@ typedef struct DisasContext {
     bool va32; /* 32-bit virtual address */
     uint32_t cpucfg1;
     uint32_t cpucfg2;
+    uint32_t cpucfg3;
 } DisasContext;
 
 void generate_exception(DisasContext *ctx, int excp);

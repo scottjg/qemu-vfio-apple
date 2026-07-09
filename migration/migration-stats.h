@@ -27,23 +27,29 @@
 
 /*
  * These are the ram migration statistic counters.  It is loosely
- * based on MigrationStats.
+ * based on MigrationRAMStats.
  */
 typedef struct {
     /*
-     * Number of bytes that were dirty last time that we synced with
-     * the guest memory.  We use that to calculate the downtime.  As
-     * the remaining dirty amounts to what we know that is still dirty
-     * since last iteration, not counting what the guest has dirtied
-     * since we synchronized bitmaps.
+     * Number of bytes that were reported dirty after the latest
+     * system-wise synchronization of dirty information.  It is used to do
+     * best-effort estimation on expected downtime.
      */
     uint64_t dirty_bytes_last_sync;
+    /*
+     * Number of bytes that were reported dirty now.  This is an estimate
+     * value and will be updated every time migration thread queries from
+     * modules in an iteration loop.  It is used to provide best-effort
+     * estimation on total remaining data.
+     */
+    uint64_t dirty_bytes_total;
     /*
      * Number of pages dirtied per second.
      */
     uint64_t dirty_pages_rate;
     /*
-     * Number of times we have synchronized guest bitmaps.
+     * Number of times we have synchronized guest bitmaps.  This always
+     * starts from 1 for the 1st iteration.
      */
     uint64_t dirty_sync_count;
     /*

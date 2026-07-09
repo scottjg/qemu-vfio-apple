@@ -1,22 +1,10 @@
 /*
- *  System call related declarations
+ * System call related declarations
  *
- *  Copyright (c) 2013-15 Stacey D. Son (sson at FreeBSD)
+ * Copyright (c) 2013-2015 Stacey D. Son
  *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, see <http://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
-
 #ifndef SYSCALL_DEFS_H
 #define SYSCALL_DEFS_H
 
@@ -25,28 +13,12 @@
 
 #include "errno_defs.h"
 
-#include "freebsd/syscall_nr.h"
+#include "os-syscall.h"
 
 /*
  * machine/_types.h
  * or x86/_types.h
  */
-
-/*
- * time_t seems to be very inconsistly defined for the different *BSD's...
- *
- * FreeBSD uses a 64bits time_t except on i386
- * so we have to add a special case here.
- *
- * On NetBSD time_t is always defined as an int64_t.  On OpenBSD time_t
- * is always defined as an int.
- *
- */
-#if (!defined(TARGET_I386))
-typedef int64_t target_time_t;
-#else
-typedef int32_t target_time_t;
-#endif
 
 struct target_iovec {
     abi_long iov_base;   /* Starting address */
@@ -565,6 +537,20 @@ type safe_##name(type1 arg1, type2 arg2, type3 arg3, type4 arg4, \
     return safe_syscall(SYS_##name, arg1, arg2, arg3, arg4, arg5, arg6); \
 }
 
+/*
+ * sys/socket.h
+ */
+struct target_sockaddr {
+    uint8_t sa_len;
+    uint8_t sa_family;
+    uint8_t sa_data[14];
+} QEMU_PACKED;
+
+struct target_in_addr {
+    uint32_t s_addr; /* big endian */
+};
+
+#define safe_ioctl(...) safe_syscall(SYS_ioctl, __VA_ARGS__)
 #define safe_fcntl(...) safe_syscall(SYS_fcntl, __VA_ARGS__)
 
 /* So far all target and host bitmasks are the same */

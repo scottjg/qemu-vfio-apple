@@ -29,6 +29,11 @@
 #
 # Return information about KVM acceleration
 #
+# Features:
+#
+# @deprecated: This command is deprecated.  Use `query-accelerators`
+#     instead.
+#
 # Since: 0.14
 #
 # .. qmp-example::
@@ -36,7 +41,8 @@
 #     -> { "execute": "query-kvm" }
 #     <- { "return": { "enabled": true, "present": true } }
 ##
-{ 'command': 'query-kvm', 'returns': 'KvmInfo' }
+{ 'command': 'query-kvm', 'returns': 'KvmInfo',
+  'features': [ 'deprecated' ] }
 
 ##
 # @x-accel-stats:

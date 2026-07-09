@@ -12,6 +12,8 @@
 #error TCG_ADDRESS_BITS must be defined
 #endif
 
+#include "tcg/tcg-op-common.h"
+
 #if TCG_ADDRESS_BITS == 32
 typedef TCGv_i32 TCGv_va;
 #define TCG_TYPE_VA TCG_TYPE_I32

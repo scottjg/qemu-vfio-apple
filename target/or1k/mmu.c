@@ -24,6 +24,7 @@
 #include "exec/cputlb.h"
 #include "exec/page-protection.h"
 #include "exec/target_page.h"
+#include "accel/tcg/cpu-loop.h"
 #include "qemu/host-utils.h"
 #include "hw/core/loader.h"
 
@@ -138,7 +139,7 @@ bool openrisc_cpu_tlb_fill(CPUState *cs, vaddr addr, int size,
     cpu_loop_exit_restore(cs, retaddr);
 }
 
-hwaddr openrisc_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
+hwaddr openrisc_cpu_get_phys_addr_debug(CPUState *cs, vaddr addr)
 {
     OpenRISCCPU *cpu = OPENRISC_CPU(cs);
     int prot, excp, sr = cpu->env.sr;

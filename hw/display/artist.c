@@ -1324,7 +1324,7 @@ static bool artist_update_display(void *opaque)
     artist_draw_cursor(s);
 
     if (first >= 0) {
-        dpy_gfx_update(s->con, 0, first, s->width, last - first + 1);
+        qemu_console_update(s->con, 0, first, s->width, last - first + 1);
     }
 
     return true;
@@ -1424,7 +1424,7 @@ static void artist_realizefn(DeviceState *dev, Error **errp)
     s->misc_video |= 0x0A000000;
     s->misc_ctrl  |= 0x00800000;
 
-    s->con = graphic_console_init(dev, 0, &artist_ops, s);
+    s->con = qemu_graphic_console_create(dev, 0, &artist_ops, s);
     qemu_console_resize(s->con, s->width, s->height);
 }
 

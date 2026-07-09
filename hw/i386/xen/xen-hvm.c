@@ -184,7 +184,7 @@ static void xen_ram_init(PCMachineState *pcms,
 static XenPhysmap *get_physmapping(hwaddr start_addr, ram_addr_t size,
                                    int page_mask)
 {
-    XenPhysmap *physmap = NULL;
+    XenPhysmap *physmap;
 
     start_addr &= page_mask;
 
@@ -200,7 +200,7 @@ static hwaddr xen_phys_offset_to_gaddr(hwaddr phys_offset, ram_addr_t size,
                                        int page_mask)
 {
     hwaddr addr = phys_offset & page_mask;
-    XenPhysmap *physmap = NULL;
+    XenPhysmap *physmap;
 
     QLIST_FOREACH(physmap, &xen_physmap, list) {
         if (range_covers_byte(physmap->phys_offset, physmap->size, addr)) {

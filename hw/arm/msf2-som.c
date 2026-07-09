@@ -84,7 +84,7 @@ static void emcraft_sf2_s2s010_init(MachineState *machine)
     /* Attach SPI flash to SPI0 controller */
     spi_bus = qdev_get_child_bus(dev, "spi0");
     spi_flash = qdev_new("s25sl12801"); /* Spansion S25FL128SDPBHICO */
-    qdev_prop_set_uint8(spi_flash, "spansion-cr2nv", 1);
+    qdev_prop_set_uint8(spi_flash, "spansion-cr2nv", 0x8);
     if (dinfo) {
         qdev_prop_set_drive_err(spi_flash, "drive",
                                 blk_by_legacy_dinfo(dinfo), &error_fatal);

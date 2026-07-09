@@ -45,7 +45,6 @@ int vfio_region_mmap_fd(VFIORegion *region);
 void vfio_region_unmap_fd(VFIORegion *region);
 int vfio_region_mmap(VFIORegion *region);
 void vfio_region_mmaps_set_enabled(VFIORegion *region, bool enabled);
-void vfio_region_unmap(VFIORegion *region);
 void vfio_region_exit(VFIORegion *region);
 void vfio_region_finalize(VFIORegion *region);
 

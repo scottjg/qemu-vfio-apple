@@ -26,7 +26,7 @@ write_config()
     cat > "$CONF" <<EOF
 <busconfig>
   <type>session</type>
-  <listen>unix:tmpdir=$DBUS_VMSTATE_TEST_TMPDIR</listen>
+  <listen>unix:tmpdir=$(dirname "$CONF")</listen>
 
   <policy context="default">
      <!-- Holes must be punched in service configuration files for
@@ -62,9 +62,17 @@ write_config()
      <deny send_destination="org.freedesktop.DBus"
            send_interface="org.freedesktop.systemd1.Activator"/>
 
-     <allow own="org.qemu.VMState1"/>
-     <allow send_destination="org.qemu.VMState1"/>
-     <allow receive_sender="org.qemu.VMState1"/>
+    <allow own="org.qemu"/>
+    <allow send_destination="org.qemu"/>
+    <allow receive_sender="org.qemu"/>
+
+    <allow own="org.qemu.VMState1"/>
+    <allow send_destination="org.qemu.VMState1"/>
+    <allow receive_sender="org.qemu.VMState1"/>
+
+    <allow own="org.qemu.vnc"/>
+    <allow send_destination="org.qemu.vnc"/>
+    <allow receive_sender="org.qemu.vnc"/>
 
   </policy>
 

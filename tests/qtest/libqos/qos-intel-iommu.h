@@ -40,6 +40,16 @@
  */
 #define QVTD_IQ_BASE              (QVTD_MEM_BASE + 0x00020000)
 #define QVTD_IQ_QS                0    /* QS=0 → 256 entries */
+#define QVTD_IQ_DESC_SIZE         16   /* 128-bit descriptor (iq_dw=0) */
+#define QVTD_IQT_SHIFT            4    /* IQT_REG[18:4] is the tail index */
+
+/*
+ * Invalidation Wait Descriptor with Status Write (VT-d 6.5.2.8).
+ * The IOMMU writes QVTD_INV_WAIT_DATA to QVTD_INV_WAIT_ADDR after all
+ * preceding invalidation descriptors complete.
+ */
+#define QVTD_INV_WAIT_ADDR        (QVTD_MEM_BASE + 0x00040000)
+#define QVTD_INV_WAIT_DATA        0x1u
 
 /*
  * Fault Event MSI configuration.
@@ -181,5 +191,69 @@ uint32_t qvtd_build_dma_attrs(void);
 void qvtd_run_translation_case(QTestState *qts, QPCIDevice *dev,
                                QPCIBar bar, uint64_t iommu_base,
                                const QVTDTestConfig *cfg);
+
+/*
+ * qvtd_iommu_args - Build the -device intel-iommu command-line fragment
+ *                   for the requested translation mode.
+ */
+const char *qvtd_iommu_args(QVTDTransMode mode);
+
+/*
+ * qvtd_check_caps - Check whether the running QEMU exposes the ECAP bits
+ *                   required by @mode.  Calls g_test_skip() and returns
+ *                   false when a required capability is missing.
+ */
+bool qvtd_check_caps(QTestState *qts, QVTDTransMode mode);
+
+/*
+ * qvtd_setup_qtest_pci_device - Create a QPCIBus, locate the iommu-testdev
+ *                               PCI function, enable it and map BAR0.
+ *
+ * On success, *pcibus and *bar are populated and the returned QPCIDevice
+ * must be released by the caller via g_free().
+ */
+QPCIDevice *qvtd_setup_qtest_pci_device(QTestState *qts, QPCIBus **pcibus,
+                                        QPCIBar *bar);
+
+/*
+ * qvtd_leaf_pte_addr - Address of the leaf (L1) PTE for @iova, assuming
+ *                      the hierarchy was built by
+ *                      qvtd_setup_translation_tables() with 4 KB leaves.
+ */
+uint64_t qvtd_leaf_pte_addr(uint64_t iova);
+
+/*
+ * qvtd_make_leaf_pte - Build a leaf PTE value mapping @pa, for the
+ *                      4-level / 4 KB-leaf layout used by
+ *                      qvtd_setup_translation_tables().
+ *                      Selects FLT or SLT/legacy attributes from @mode.
+ */
+uint64_t qvtd_make_leaf_pte(uint64_t pa, QVTDTransMode mode);
+
+/*
+ * qvtd_submit_inv_wait_and_poll - Submit an Invalidation Wait Descriptor
+ *                                 with Status Write and poll until the
+ *                                 IOMMU writes the expected status data.
+ *
+ * Asserts on timeout.  Returns the new tail index.
+ */
+uint32_t qvtd_submit_inv_wait_and_poll(QTestState *qts, uint64_t iommu_base,
+                                       uint32_t tail);
+
+/*
+ * qvtd_submit_iotlb_global_inv  - global IOTLB invalidation.
+ * qvtd_submit_iotlb_domain_inv  - domain-selective IOTLB invalidation.
+ * qvtd_submit_iotlb_page_inv    - page-selective IOTLB invalidation;
+ *                                 @addr must be 4 KB aligned.  @am
+ *                                 selects the address mask per VT-d
+ *                                 6.5.2.4 (am=0 → single 4 KB page).
+ */
+uint32_t qvtd_submit_iotlb_global_inv(QTestState *qts, uint64_t iommu_base,
+                                      uint32_t tail);
+uint32_t qvtd_submit_iotlb_domain_inv(QTestState *qts, uint64_t iommu_base,
+                                      uint16_t domain_id, uint32_t tail);
+uint32_t qvtd_submit_iotlb_page_inv(QTestState *qts, uint64_t iommu_base,
+                                    uint16_t domain_id, uint64_t addr,
+                                    uint8_t am, uint32_t tail);
 
 #endif /* QTEST_LIBQOS_INTEL_IOMMU_H */

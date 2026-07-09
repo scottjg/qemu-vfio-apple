@@ -117,6 +117,9 @@ void migration_file_set_error(int ret, Error *err);
 /* True if incoming migration entered POSTCOPY_INCOMING_DISCARD */
 bool migration_in_incoming_postcopy(void);
 
+/* True while the destination still receives guest RAM (precopy or postcopy) */
+bool migration_guest_ram_loading(void);
+
 /* True if incoming migration entered POSTCOPY_INCOMING_ADVISE */
 bool migration_incoming_postcopy_advised(void);
 
@@ -155,5 +158,7 @@ bool multifd_device_state_save_thread_should_exit(void);
 
 void multifd_abort_device_state_save_threads(void);
 bool multifd_join_device_state_save_threads(void);
+
+void migration_request_switchover_ack_legacy(const char *requester);
 
 #endif

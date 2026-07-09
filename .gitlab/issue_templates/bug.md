@@ -13,8 +13,9 @@ older than this should be reported to the distribution instead.
 See https://www.qemu.org/contribute/report-a-bug/ for additional
 guidance.
 
-If this is a security issue, please consult
-https://www.qemu.org/contribute/security-process/
+If this is a security issue, ensure this ticket is marked 'confidential'
+before submission. See https://www.qemu.org/contribute/security-process/
+for additional guidance
 -->
 
 ## Host environment
@@ -49,12 +50,22 @@ https://www.qemu.org/contribute/security-process/
 2.
 3.
 
+<!--
+Note: if this issue was discovered with the assistance of automated
+tooling LLM, static analysis, fuzzers), the reporter must disclose
+that in the description. The steps to reproduce, and any other findings,
+must be fully validated by the user of the tool prior to submission.
+-->
 
 ## Additional information
 
 <!--
 Attach logs, stack traces, screenshots, etc. Compress the files if necessary.
 If using libvirt, libvirt logs and XML domain information may be relevant.
+
+If attaching binary test cases you should describe where they were obtained
+from, preferably linking to the original source. We greatly prefer test cases in
+the form of source code that can be audited before compiling by the engineer.
 -->
 
 <!--

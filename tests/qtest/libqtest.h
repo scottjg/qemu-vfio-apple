@@ -427,6 +427,14 @@ char *qtest_vhmp(QTestState *s, const char *fmt, va_list ap)
 void qtest_module_load(QTestState *s, const char *prefix, const char *libname);
 
 /**
+ * qtest_qom_tests:
+ * @s: #QTestState instance to operate on.
+ *
+ * Run QOM property get/set round-trip tests on all non-abstract types.
+ */
+void qtest_qom_tests(QTestState *s);
+
+/**
  * qtest_get_irq:
  * @s: #QTestState instance to operate on.
  * @num: Interrupt to observe.
@@ -1177,5 +1185,16 @@ bool have_qemu_img(void);
  * Returns: true if the image has been created successfully.
  */
 bool mkimg(const char *file, const char *fmt, unsigned size_mb);
+
+/**
+ * qtest_verbose:
+ * @domain: The logging domain
+ *
+ * Read the QTEST_LOG environment variable and return whether the
+ * specified domain is enabled for verbose logging. Enable specific
+ * logging domains with QTEST_LOG=<domain> or use QTEST_LOG=-<domain> to
+ * enable all domains except for the specific one.
+ */
+bool qtest_verbose(const char *domain);
 
 #endif

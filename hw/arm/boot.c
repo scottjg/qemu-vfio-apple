@@ -1161,6 +1161,11 @@ static void arm_setup_firmware_boot(ARMCPU *cpu, struct arm_boot_info *info)
             fw_cfg_add_string(fw_cfg, FW_CFG_CMDLINE_DATA,
                               info->kernel_cmdline);
         }
+
+        if (info->shim_filename) {
+            load_image_to_fw_cfg_file(fw_cfg, "etc/boot/shim",
+                                      info->shim_filename);
+        }
     }
 
     /*
@@ -1195,6 +1200,7 @@ void arm_load_kernel(ARMCPU *cpu, MachineState *ms, struct arm_boot_info *info)
      * doesn't support secure.
      */
     assert(!(info->secure_board_setup && kvm_enabled()));
+    info->shim_filename = ms->shim_filename;
     info->kernel_filename = ms->kernel_filename;
     info->kernel_cmdline = ms->kernel_cmdline;
     info->initrd_filename = ms->initrd_filename;

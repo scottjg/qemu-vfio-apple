@@ -25,9 +25,9 @@
 #include "qemu/osdep.h"
 #include <dirent.h>
 #include "hw/core/qdev.h"
+#include "hw/core/sysemu-cpu-ops.h"
 #include "monitor-internal.h"
 #include "monitor/hmp.h"
-#include "monitor/hmp-target.h"
 #include "qobject/qdict.h"
 #include "qobject/qnum.h"
 #include "qemu/bswap.h"
@@ -36,20 +36,103 @@
 #include "qemu/cutils.h"
 #include "qemu/log.h"
 #include "qemu/option.h"
+#include "qemu/base-arch-defs.h"
 #include "qemu/target-info.h"
 #include "qemu/units.h"
+#include "qapi/error.h"
+#include "qom/object_interfaces.h"
 #include "exec/gdbstub.h"
 #include "system/block-backend.h"
 #include "trace.h"
+
+OBJECT_DEFINE_TYPE(MonitorHMP, monitor_hmp, MONITOR_HMP, MONITOR);
+
+static void monitor_hmp_finalize(Object *obj)
+{
+    MonitorHMP *mon = MONITOR_HMP(obj);
+    if (mon->rs) {
+        readline_free(mon->rs);
+    }
+}
+
+static bool monitor_hmp_get_readline(Object *obj, Error **errp)
+{
+    MonitorHMP *mon = MONITOR_HMP(obj);
+
+    return mon->use_readline;
+}
+
+static void monitor_hmp_set_readline(Object *obj, bool val, Error **errp)
+{
+    MonitorHMP *mon = MONITOR_HMP(obj);
+
+    mon->use_readline = val;
+}
+
+int monitor_hmp_vprintf(Monitor *mon, const char *fmt, va_list ap)
+    G_GNUC_PRINTF(2, 0);
+static void monitor_hmp_accept_input(Monitor *mon);
+static void monitor_hmp_complete(UserCreatable *uc, Error **errp);
+static bool monitor_hmp_prepare_delete(UserCreatable *uc, Error **errp);
+
+static void monitor_hmp_class_init(ObjectClass *cls, const void *data)
+{
+    MonitorClass *moncls = MONITOR_CLASS(cls);
+    UserCreatableClass *ucc = USER_CREATABLE_CLASS(cls);
+
+    object_class_property_add_bool(cls, "readline",
+                                   monitor_hmp_get_readline,
+                                   monitor_hmp_set_readline);
+
+    moncls->vprintf = monitor_hmp_vprintf;
+    moncls->accept_input = monitor_hmp_accept_input;
+
+    ucc->complete = monitor_hmp_complete;
+    ucc->prepare_delete = monitor_hmp_prepare_delete;
+}
+
+static void monitor_hmp_init(Object *obj)
+{
+    MonitorHMP *hmp = MONITOR_HMP(obj);
+
+    /*
+     * Default to common case for external HMP use,
+     * as opposed to non-interactive internal use
+     * from gdbstub
+     */
+    hmp->use_readline = true;
+}
+
+int monitor_hmp_vprintf(Monitor *mon, const char *fmt, va_list ap)
+{
+    g_autofree char *buf = g_strdup_vprintf(fmt, ap);
+    return monitor_puts(mon, buf);
+}
+
+static void monitor_hmp_accept_input(Monitor *mon)
+{
+    qemu_mutex_lock(&mon->mon_lock);
+    if (mon->reset_seen) {
+        MonitorHMP *hmp = MONITOR_HMP(mon);
+        assert(hmp->rs);
+        readline_restart(hmp->rs);
+        qemu_chr_fe_accept_input(&mon->chr);
+        qemu_mutex_unlock(&mon->mon_lock);
+        readline_show_prompt(hmp->rs);
+    } else {
+        qemu_chr_fe_accept_input(&mon->chr);
+        qemu_mutex_unlock(&mon->mon_lock);
+    }
+}
 
 static void monitor_command_cb(void *opaque, const char *cmdline,
                                void *readline_opaque)
 {
     MonitorHMP *mon = opaque;
 
-    monitor_suspend(&mon->common);
+    monitor_suspend(&mon->parent_obj);
     handle_hmp_command(mon, cmdline);
-    monitor_resume(&mon->common);
+    monitor_resume(&mon->parent_obj);
 }
 
 void monitor_read_command(MonitorHMP *mon, int show_prompt)
@@ -72,7 +155,7 @@ int monitor_read_password(MonitorHMP *mon, ReadLineFunc *readline_func,
         /* prompt is printed on return from the command handler */
         return 0;
     } else {
-        monitor_printf(&mon->common,
+        monitor_printf(&mon->parent_obj,
                        "terminal does not support password prompting\n");
         return -ENOTTY;
     }
@@ -219,6 +302,9 @@ static bool cmd_can_preconfig(const HMPCommand *cmd)
 
 static bool cmd_available(const HMPCommand *cmd)
 {
+    if (cmd->arch_bitmask && !qemu_arch_available(cmd->arch_bitmask)) {
+        return false;
+    }
     return phase_check(PHASE_MACHINE_READY) || cmd_can_preconfig(cmd);
 }
 
@@ -354,6 +440,8 @@ static bool gdb_get_register(Monitor *mon, int64_t *pval, const char *name)
 
 static const char *pch;
 static sigjmp_buf expr_env;
+
+static int get_monitor_def(Monitor *mon, int64_t *pval, const char *name);
 
 static G_NORETURN G_GNUC_PRINTF(2, 3)
 void expr_error(Monitor *mon, const char *fmt, ...)
@@ -689,7 +777,7 @@ static const HMPCommand *monitor_parse_command(MonitorHMP *hmp_mon,
                                                const char **cmdp,
                                                HMPCommand *table)
 {
-    Monitor *mon = &hmp_mon->common;
+    Monitor *mon = &hmp_mon->parent_obj;
     const char *p;
     const HMPCommand *cmd;
     char cmdname[256];
@@ -1182,35 +1270,37 @@ void handle_hmp_command(MonitorHMP *mon, const char *cmdline)
 
     if (!cmd->cmd && !cmd->cmd_info_hrt) {
         /* FIXME: is it useful to try autoload modules here ??? */
-        monitor_printf(&mon->common, "Command \"%.*s\" is not available.\n",
+        monitor_printf(&mon->parent_obj, "Command \"%.*s\" is not available.\n",
                        (int)(cmdline - cmd_start), cmd_start);
         return;
     }
 
-    qdict = monitor_parse_arguments(&mon->common, &cmdline, cmd);
+    qdict = monitor_parse_arguments(&mon->parent_obj, &cmdline, cmd);
     if (!qdict) {
         while (cmdline > cmd_start && qemu_isspace(cmdline[-1])) {
             cmdline--;
         }
-        monitor_printf(&mon->common, "Try \"help %.*s\" for more information\n",
+        monitor_printf(&mon->parent_obj,
+                       "Try \"help %.*s\" for more information\n",
                        (int)(cmdline - cmd_start), cmd_start);
         return;
     }
 
     if (!cmd->coroutine) {
         /* old_mon is non-NULL when called from qmp_human_monitor_command() */
-        Monitor *old_mon = monitor_set_cur(qemu_coroutine_self(), &mon->common);
-        handle_hmp_command_exec(&mon->common, cmd, qdict);
+        Monitor *old_mon = monitor_set_cur(qemu_coroutine_self(),
+                                           &mon->parent_obj);
+        handle_hmp_command_exec(&mon->parent_obj, cmd, qdict);
         monitor_set_cur(qemu_coroutine_self(), old_mon);
     } else {
         HandleHmpCommandCo data = {
-            .mon = &mon->common,
+            .mon = &mon->parent_obj,
             .cmd = cmd,
             .qdict = qdict,
             .done = false,
         };
         Coroutine *co = qemu_coroutine_create(handle_hmp_command_co, &data);
-        monitor_set_cur(co, &mon->common);
+        monitor_set_cur(co, &mon->parent_obj);
         aio_co_enter(qemu_get_aio_context(), co);
         AIO_WAIT_WHILE_UNLOCKED(NULL, !data.done);
     }
@@ -1428,7 +1518,7 @@ cleanup:
 
 static void monitor_read(void *opaque, const uint8_t *buf, int size)
 {
-    MonitorHMP *mon = container_of(opaque, MonitorHMP, common);
+    MonitorHMP *mon = container_of(opaque, MonitorHMP, parent_obj);
     int i;
 
     if (mon->rs) {
@@ -1437,7 +1527,7 @@ static void monitor_read(void *opaque, const uint8_t *buf, int size)
         }
     } else {
         if (size == 0 || buf[size - 1] != 0) {
-            monitor_printf(&mon->common, "corrupted command\n");
+            monitor_printf(&mon->parent_obj, "corrupted command\n");
         } else {
             handle_hmp_command(mon, (char *)buf);
         }
@@ -1447,13 +1537,16 @@ static void monitor_read(void *opaque, const uint8_t *buf, int size)
 static void monitor_event(void *opaque, QEMUChrEvent event)
 {
     Monitor *mon = opaque;
+    MonitorHMP *hmp = MONITOR_HMP(mon);
 
     switch (event) {
     case CHR_EVENT_MUX_IN:
         qemu_mutex_lock(&mon->mon_lock);
         if (mon->mux_out) {
             mon->mux_out = 0;
-            monitor_resume(mon);
+            if (hmp->use_readline) {
+                monitor_resume(mon);
+            }
         }
         qemu_mutex_unlock(&mon->mon_lock);
         break;
@@ -1466,7 +1559,9 @@ static void monitor_event(void *opaque, QEMUChrEvent event)
             } else {
                 monitor_flush_locked(mon);
             }
-            monitor_suspend(mon);
+            if (hmp->use_readline) {
+                monitor_suspend(mon);
+            }
             mon->mux_out = 1;
         }
         qemu_mutex_unlock(&mon->mon_lock);
@@ -1477,7 +1572,7 @@ static void monitor_event(void *opaque, QEMUChrEvent event)
                        "information\n", QEMU_VERSION);
         qemu_mutex_lock(&mon->mon_lock);
         mon->reset_seen = 1;
-        if (!mon->mux_out) {
+        if (!mon->mux_out && hmp->use_readline) {
             /* Suspend-resume forces the prompt to be printed.  */
             monitor_suspend(mon);
             monitor_resume(mon);
@@ -1506,39 +1601,65 @@ static void G_GNUC_PRINTF(2, 3) monitor_readline_printf(void *opaque,
     MonitorHMP *mon = opaque;
     va_list ap;
     va_start(ap, fmt);
-    monitor_vprintf(&mon->common, fmt, ap);
+    monitor_vprintf(&mon->parent_obj, fmt, ap);
     va_end(ap);
 }
 
 static void monitor_readline_flush(void *opaque)
 {
     MonitorHMP *mon = opaque;
-    monitor_flush(&mon->common);
+    monitor_flush(&mon->parent_obj);
 }
 
-void monitor_init_hmp(Chardev *chr, bool use_readline, Error **errp)
+void monitor_new_hmp(const char *id, const char *chardev_id,
+                     bool use_readline, Error **errp)
 {
-    MonitorHMP *mon = g_new0(MonitorHMP, 1);
+    g_autofree char *autoid = id ? NULL : monitor_compat_id();
+    object_new_with_props(TYPE_MONITOR_HMP,
+                          object_get_objects_root(),
+                          id ? id : autoid,
+                          errp,
+                          "chardev", chardev_id,
+                          "readline", use_readline ? "yes" : "no",
+                          NULL);
+}
 
-    if (!qemu_chr_fe_init(&mon->common.chr, chr, errp)) {
-        g_free(mon);
+static void monitor_hmp_complete(UserCreatable *uc, Error **errp)
+{
+    MonitorHMP *mon = MONITOR_HMP(uc);
+    UserCreatableClass *ucc_parent =
+        USER_CREATABLE_CLASS(
+            object_class_get_parent(
+                OBJECT_CLASS(MONITOR_HMP_GET_CLASS(mon))));
+    ERRP_GUARD();
+
+    ucc_parent->complete(uc, errp);
+    if (*errp) {
         return;
     }
 
-    monitor_data_init(&mon->common, false, false, false);
+    if (mon->parent_obj.chardev_id) {
+        if (mon->use_readline) {
+            mon->rs = readline_init(monitor_readline_printf,
+                                    monitor_readline_flush,
+                                    mon,
+                                    monitor_find_completion);
+            monitor_read_command(mon, 0);
+        }
 
-    mon->use_readline = use_readline;
-    if (mon->use_readline) {
-        mon->rs = readline_init(monitor_readline_printf,
-                                monitor_readline_flush,
-                                mon,
-                                monitor_find_completion);
-        monitor_read_command(mon, 0);
+        qemu_chr_fe_set_handlers(&mon->parent_obj.chr,
+                                 monitor_can_read,
+                                 monitor_read,
+                                 monitor_event, NULL,
+                                 &mon->parent_obj, NULL, true);
+        monitor_list_append(&mon->parent_obj);
     }
+}
 
-    qemu_chr_fe_set_handlers(&mon->common.chr, monitor_can_read, monitor_read,
-                             monitor_event, NULL, &mon->common, NULL, true);
-    monitor_list_append(&mon->common);
+static bool monitor_hmp_prepare_delete(UserCreatable *uc, Error **errp)
+{
+    error_setg(errp, "Deleting HMP monitors is not supported");
+    return false;
 }
 
 /**
@@ -1594,4 +1715,41 @@ void monitor_register_hmp_info_hrt(const char *name,
         table++;
     }
     g_assert_not_reached();
+}
+
+/*
+ * Set @pval to the value in the register identified by @name.
+ * return 0 if OK, -1 if not found
+ */
+static int get_monitor_def(Monitor *mon, int64_t *pval, const char *name)
+{
+    CPUState *cs = mon_get_cpu(mon);
+    const MonitorDef *md;
+    void *ptr;
+
+    if (cs == NULL) {
+        return -1;
+    }
+    md = cs->cc->sysemu_ops->monitor_defs;
+    if (md == NULL) {
+        return -1;
+    }
+
+    for (; md->name != NULL; md++) {
+        if (hmp_compare_cmd(name, md->name)) {
+            if (md->get_value) {
+                *pval = md->get_value(mon, md, md->offset);
+            } else {
+                CPUArchState *env = mon_get_cpu_env(mon);
+                ptr = (uint8_t *)env + md->offset;
+                *pval = *(int32_t *)ptr;
+            }
+            return 0;
+        }
+    }
+
+    if (!cs->cc->sysemu_ops->monitor_get_register) {
+        return -1;
+    }
+    return cs->cc->sysemu_ops->monitor_get_register(cs, name, pval);
 }

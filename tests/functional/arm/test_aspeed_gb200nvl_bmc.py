@@ -19,8 +19,7 @@ class GB200Machine(AspeedTest):
 
         self.do_test_arm_aspeed_openbmc('gb200nvl-bmc', image=image_path,
                                         uboot='2019.04', cpu_id='0xf00',
-                                        soc='AST2600 rev A3',
-                                        image_hostname='gb200nvl-obmc')
+                                        soc='AST2600 rev A3')
 
 if __name__ == '__main__':
     AspeedTest.main()

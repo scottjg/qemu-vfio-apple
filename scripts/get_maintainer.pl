@@ -384,6 +384,7 @@ foreach my $file (@ARGV) {
 	} elsif (!(stat $file)) {
 	    die "$P: file '${file}' not found: $!\n";
 	}
+	$file =~ s,^./,,;
     }
     if ($from_filename) {
 	push(@files, $file);

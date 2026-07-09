@@ -1822,7 +1822,7 @@ static bool sm501_update_display(void *opaque)
         } else {
             if (y_start >= 0) {
                 /* flush to display */
-                dpy_gfx_update(s->con, 0, y_start, width, y - y_start);
+                qemu_console_update(s->con, 0, y_start, width, y - y_start);
                 y_start = -1;
             }
         }
@@ -1831,7 +1831,7 @@ static bool sm501_update_display(void *opaque)
 
     /* complete flush to display */
     if (y_start >= 0) {
-        dpy_gfx_update(s->con, 0, y_start, width, y - y_start);
+        qemu_console_update(s->con, 0, y_start, width, y - y_start);
     }
 
     return true;
@@ -1936,7 +1936,7 @@ static void sm501_init(SM501State *s, DeviceState *dev,
                                 &s->twoD_engine_region);
 
     /* create qemu graphic console */
-    s->con = graphic_console_init(dev, 0, &sm501_ops, s);
+    s->con = qemu_graphic_console_create(dev, 0, &sm501_ops, s);
 }
 
 static const VMStateDescription vmstate_sm501_state = {

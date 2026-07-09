@@ -35,6 +35,11 @@ config ARM_GIC_KVM
     bool
     depends on ARM_GIC && KVM
 
+config ARM_GICV5
+    bool
+    depends on TCG
+    select MSI_NONBROKEN
+
 config XICS
     bool
 

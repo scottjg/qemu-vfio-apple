@@ -303,7 +303,7 @@ static bool pl110_update_display(void *opaque)
                                &first, &last);
 
     if (first >= 0) {
-        dpy_gfx_update(s->con, 0, first, s->cols, last - first + 1);
+        qemu_console_update(s->con, 0, first, s->cols, last - first + 1);
     }
     s->invalidate = 0;
     return true;
@@ -557,7 +557,7 @@ static void pl110_realize(DeviceState *dev, Error **errp)
     s->vblank_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
                                    pl110_vblank_interrupt, s);
     qdev_init_gpio_in(dev, pl110_mux_ctrl_set, 1);
-    s->con = graphic_console_init(dev, 0, &pl110_gfx_ops, s);
+    s->con = qemu_graphic_console_create(dev, 0, &pl110_gfx_ops, s);
 }
 
 static void pl110_init(Object *obj)

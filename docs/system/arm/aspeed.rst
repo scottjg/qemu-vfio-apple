@@ -1,5 +1,5 @@
-Aspeed family boards (``ast2500-evb``, ``ast2600-evb``, ``bletchley-bmc``, ``fuji-bmc``, ``gb200nvl-bmc``, ``fby35-bmc``, ``fp5280g2-bmc``, ``g220a-bmc``, ``palmetto-bmc``, ``qcom-dc-scm-v1-bmc``, ``qcom-firework-bmc``, ``quanta-q71l-bmc``, ``rainier-bmc``, ``romulus-bmc``, ``sonorapass-bmc``, ``supermicrox11-bmc``, ``supermicrox11spi-bmc``, ``tiogapass-bmc``, ``witherspoon-bmc``, ``yosemitev2-bmc``)
-===================================================================================================================================================================================================================================================================================================================================================================================================================
+Aspeed family boards (``anacapa-bmc``, ``ast2500-evb``, ``ast2600-evb``, ``bletchley-bmc``, ``fuji-bmc``, ``gb200nvl-bmc``, ``fby35-bmc``, ``g220a-bmc``, ``palmetto-bmc``, ``quanta-q71l-bmc``, ``rainier-bmc``, ``romulus-bmc``, ``supermicrox11-bmc``, ``supermicrox11spi-bmc``, ``tiogapass-bmc``, ``witherspoon-bmc``, ``yosemitev2-bmc``)
+===============================================================================================================================================================================================================================================================================================================================================
 
 The QEMU Aspeed machines model BMCs of various OpenPOWER systems and
 Aspeed evaluation boards. They are based on different releases of the
@@ -22,8 +22,6 @@ AST2500 SoC based machines :
 - ``ast2500-evb``          Aspeed AST2500 Evaluation board
 - ``romulus-bmc``          OpenPOWER Romulus POWER9 BMC
 - ``witherspoon-bmc``      OpenPOWER Witherspoon POWER9 BMC
-- ``sonorapass-bmc``       OCP SonoraPass BMC
-- ``fp5280g2-bmc``         Inspur FP5280G2 BMC
 - ``g220a-bmc``            Bytedance G220A BMC
 - ``yosemitev2-bmc``       Facebook YosemiteV2 BMC
 - ``tiogapass-bmc``        Facebook Tiogapass BMC
@@ -35,9 +33,8 @@ AST2600 SoC based machines :
 - ``fuji-bmc``             Facebook Fuji BMC
 - ``bletchley-bmc``        Facebook Bletchley BMC
 - ``fby35-bmc``            Facebook fby35 BMC
+- ``anacapa-bmc``          Facebook Anacapa BMC
 - ``gb200nvl-bmc``         Nvidia GB200nvl BMC
-- ``qcom-dc-scm-v1-bmc``   Qualcomm DC-SCM V1 BMC
-- ``qcom-firework-bmc``    Qualcomm Firework BMC
 
 Supported devices
 -----------------
@@ -444,18 +441,26 @@ Use ``tio`` or another terminal emulator to connect to the consoles:
    $ tio /dev/pts/57
 
 
-Aspeed MiniBMC and Platform Root of Trust processor family boards (``ast1030-evb``, ``ast1060-evb``)
-====================================================================================================
+Aspeed Bridge IC and Platform Root of Trust processor family boards (``ast1030-evb``, ``ast1040-evb``, ``ast1060-evb``)
+=======================================================================================================================
 
-The QEMU Aspeed machines model mini BMCs and Platform Root of Trust processors of various Aspeed
-evaluation boards. They are based on different releases of the Aspeed SoC : the AST1030 (MiniBMC)
-and AST1060 (Platform Root of Trust Processor), both integrating an Arm Cortex M4F CPU (200MHz).
+The QEMU Aspeed machines model Bridge ICs and Platform Root of Trust processors
+of various Aspeed evaluation boards. They are based on different members of
+the Aspeed AST10x0 SoC family:
+
+- AST1030 : Bridge IC
+- AST1040 : Bridge IC
+- AST1060 : Platform Root of Trust processor
+
+The AST1030 and AST1060 integrate an Arm Cortex-M4F CPU running at 200 MHz.
+The AST1040 integrates an Arm Cortex-M4F CPU running at 400 MHz.
 
 The SoC comes with SRAM, SPI, I2C, etc.
 
 AST10x0 SoC based machines :
 
 - ``ast1030-evb``          Aspeed AST1030 Evaluation board (Cortex-M4F)
+- ``ast1040-evb``          Aspeed AST1040 Evaluation board (Cortex-M4F)
 - ``ast1060-evb``          Aspeed AST1060 Evaluation board (Cortex-M4F)
 
 Supported devices

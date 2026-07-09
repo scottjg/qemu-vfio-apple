@@ -87,7 +87,6 @@ Board-specific documentation
    arm/cubieboard
    arm/emcraft-sf2
    arm/exynos
-   arm/fby35
    arm/musicpal
    arm/kzm
    arm/nrf

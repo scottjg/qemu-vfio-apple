@@ -138,6 +138,13 @@ struct I3CTarget {
     uint8_t static_address;
     uint8_t dcr;
     uint8_t bcr;
+    /*
+     * Provisioned ID. Since core.c sends this LSB-first during ENTDAA
+     * via (pid >> (offset * 8)) & 0xff, targets must store it
+     * pre-reversed so that pid[47:40] goes on the wire first, as
+     * required by the I3C spec.
+     *  e.g. for a device with pid 0xAABBCCDDEEFF, store 0xFFEEDDCCBBAA.
+     */
     uint64_t pid;
 
     /* CCC State tracking. */

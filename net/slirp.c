@@ -54,7 +54,8 @@ static int get_str_sep(char *buf, int buf_size, const char **pp, int sep)
     const char *p, *p1;
     int len;
     p = *pp;
-    p1 = strchr(p, sep);
+    /* negative sep means to search -sep from the end of buf */
+    p1 = sep >= 0 ? strchr(p, sep) : strrchr(p, -sep);
     if (!p1)
         return -1;
     len = p1 - p;
@@ -848,7 +849,7 @@ static int slirp_hostfwd(SlirpState *s, const char *redir_str, Error **errp)
 
 #if !defined(WIN32) && SLIRP_CHECK_VERSION(4, 7, 0)
     if (is_unix) {
-        if (get_str_sep(buf, sizeof(buf), &p, '-') < 0) {
+        if (get_str_sep(buf, sizeof(buf), &p, 0 - '-') < 0) {
             fail_reason = "Missing - separator";
             goto fail_syntax;
         }
@@ -1215,14 +1216,14 @@ void hmp_info_usernet(Monitor *mon, const QDict *qdict)
 }
 
 static void
-net_init_slirp_configs(const StringList *fwd, int flags)
+net_init_slirp_configs_host(const NetdevUserHostForwardList *fwd)
 {
     while (fwd) {
         struct slirp_config_str *config;
 
         config = g_malloc0(sizeof(*config));
         pstrcpy(config->str, sizeof(config->str), fwd->value->str);
-        config->flags = flags;
+        config->flags = SLIRP_CFG_HOSTFWD;
         config->next = slirp_configs;
         slirp_configs = config;
 
@@ -1230,9 +1231,24 @@ net_init_slirp_configs(const StringList *fwd, int flags)
     }
 }
 
-static const char **slirp_dnssearch(const StringList *dnsname)
+static void
+net_init_slirp_configs_guest(const NetdevUserGuestForwardList *fwd)
 {
-    const StringList *c = dnsname;
+    while (fwd) {
+        struct slirp_config_str *config;
+
+        config = g_malloc0(sizeof(*config));
+        pstrcpy(config->str, sizeof(config->str), fwd->value->str);
+        config->next = slirp_configs;
+        slirp_configs = config;
+
+        fwd = fwd->next;
+    }
+}
+
+static const char **slirp_dnssearch(const NetdevUserDomainSuffixList *dnsname)
+{
+    const NetdevUserDomainSuffixList *c = dnsname;
     size_t i = 0, num_opts = 0;
     const char **ret;
 
@@ -1285,8 +1301,8 @@ int net_init_slirp(const Netdev *netdev, const char *name,
 
     /* all optional fields are initialized to "all bits zero" */
 
-    net_init_slirp_configs(user->hostfwd, SLIRP_CFG_HOSTFWD);
-    net_init_slirp_configs(user->guestfwd, 0);
+    net_init_slirp_configs_host(user->hostfwd);
+    net_init_slirp_configs_guest(user->guestfwd);
 
     ret = net_slirp_init(peer, "user", name, user->q_restrict,
                          ipv4, vnet, user->host,

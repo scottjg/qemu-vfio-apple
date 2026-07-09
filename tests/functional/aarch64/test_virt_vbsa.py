@@ -17,6 +17,7 @@ from qemu_test import QemuSystemTest, Asset
 from qemu_test import get_qemu_img, skipIfMissingCommands
 from qemu_test import wait_for_console_pattern
 from qemu_test import exec_command_and_wait_for_pattern as ec_and_wait
+from qemu.machine.machine import VMLaunchFailure
 
 
 @skipIfMissingCommands("mformat", "mcopy", "mmd")
@@ -96,7 +97,14 @@ class Aarch64VirtMachine(QemuSystemTest):
                          f'file={img_path},format=raw,if=none,id=drive0')
         self.vm.add_args('-device', 'virtio-blk-pci,drive=drive0')
 
-        self.vm.launch()
+        try:
+            self.vm.launch()
+        except VMLaunchFailure as excp:
+            if "does not support providing Virtualization" in excp.output:
+                self.skipTest("accelerator has no virtualization support")
+            else:
+                self.log.info("unhandled launch failure: %s", excp.output)
+                raise excp
 
         # wait for EFI prompt
         self.wait_for_console_pattern('Shell>')

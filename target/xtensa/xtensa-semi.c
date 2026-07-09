@@ -215,14 +215,19 @@ void HELPER(simcall)(CPUXtensaState *env)
             uint32_t len_done = 0;
 
             while (len > 0) {
-                hwaddr paddr = cpu_get_phys_page_debug(cs, vaddr);
+                TranslateForDebugResult tres;
                 uint32_t page_left =
                     TARGET_PAGE_SIZE - (vaddr & (TARGET_PAGE_SIZE - 1));
                 uint32_t io_sz = page_left < len ? page_left : len;
                 hwaddr sz = io_sz;
-                void *buf = address_space_map(as, paddr, &sz, !is_write, attrs);
+                void *buf = NULL;
                 uint32_t io_done;
                 bool error = false;
+
+                if (cpu_translate_for_debug(cs, vaddr, &tres)) {
+                    buf = address_space_map(as, tres.physaddr, &sz,
+                                            !is_write, attrs);
+                }
 
                 if (buf) {
                     vaddr += io_sz;

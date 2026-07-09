@@ -68,7 +68,7 @@ void cpu_loop(CPURISCVState *env)
             } else if (ret != -QEMU_ESIGRETURN && ret != -QEMU_ESETPC) {
                 env->gpr[xA0] = ret;
             }
-            if (cs->singlestep_enabled) {
+            if (cpu_single_stepping(cs)) {
                 goto gdbstep;
             }
             break;

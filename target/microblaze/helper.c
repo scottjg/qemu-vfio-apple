@@ -21,6 +21,7 @@
 #include "qemu/osdep.h"
 #include "cpu.h"
 #include "exec/cputlb.h"
+#include "accel/tcg/cpu-loop.h"
 #include "accel/tcg/cpu-mmu-index.h"
 #include "exec/page-protection.h"
 #include "exec/target_page.h"
@@ -69,7 +70,7 @@ void mb_cpu_do_unaligned_access(CPUState *cs, vaddr addr,
 
 #ifndef CONFIG_USER_ONLY
 
-void HELPER(unaligned_access)(CPUMBState *env, uint64_t addr)
+void HELPER(microblaze_unaligned_access)(CPUMBState *env, uint64_t addr)
 {
     mb_unaligned_access_internal(env_cpu(env), addr, GETPC());
 }
@@ -280,31 +281,32 @@ void mb_cpu_do_interrupt(CPUState *cs)
     }
 }
 
-hwaddr mb_cpu_get_phys_page_attrs_debug(CPUState *cs, vaddr addr,
-                                        MemTxAttrs *attrs)
+bool mb_cpu_translate_for_debug(CPUState *cs, vaddr addr,
+                                TranslateForDebugResult *result)
 {
     MicroBlazeCPU *cpu = MICROBLAZE_CPU(cs);
-    vaddr vaddr;
     hwaddr paddr = 0;
     MicroBlazeMMULookup lu;
     int mmu_idx = cpu_mmu_index(cs, false);
     unsigned int hit;
 
-    /* Caller doesn't initialize */
-    *attrs = (MemTxAttrs) {};
-    attrs->secure = mb_cpu_access_is_secure(cpu, MMU_DATA_LOAD);
-
     if (mmu_idx != MMU_NOMMU_IDX) {
         hit = mmu_translate(cpu, &lu, addr, 0, 0);
         if (hit) {
-            vaddr = addr & TARGET_PAGE_MASK;
-            paddr = lu.paddr + vaddr - lu.vaddr;
+            paddr = lu.paddr + addr - lu.vaddr;
         } else
             paddr = 0; /* ???.  */
-    } else
-        paddr = addr & TARGET_PAGE_MASK;
+    } else {
+        paddr = addr;
+    }
 
-    return paddr;
+    *result = (TranslateForDebugResult) {
+        .physaddr = paddr,
+        .lg_page_size = TARGET_PAGE_BITS,
+        .attrs.secure = mb_cpu_access_is_secure(cpu, MMU_DATA_LOAD),
+        .attrs.debug = 1,
+    };
+    return true;
 }
 
 bool mb_cpu_exec_interrupt(CPUState *cs, int interrupt_request)

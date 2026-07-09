@@ -515,6 +515,11 @@ uint64_t cpu_ppc_get_tb(ppc_tb_t *tb_env, uint64_t vmclk, int64_t tb_offset)
     return ns_to_tb(tb_env->tb_freq, vmclk) + tb_offset;
 }
 
+int64_t cpu_ppc_load_tb_offset(CPUPPCState *env)
+{
+    return env->tb_env->tb_offset;
+}
+
 uint64_t cpu_ppc_load_tbl (CPUPPCState *env)
 {
     ppc_tb_t *tb_env = env->tb_env;

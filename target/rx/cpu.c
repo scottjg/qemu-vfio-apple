@@ -209,7 +209,7 @@ static void rx_cpu_init(Object *obj)
 
 static const struct SysemuCPUOps rx_sysemu_ops = {
     .has_work = rx_cpu_has_work,
-    .get_phys_page_debug = rx_cpu_get_phys_page_debug,
+    .get_phys_addr_debug = rx_cpu_get_phys_addr_debug,
 };
 
 static const TCGCPUOps rx_tcg_ops = {

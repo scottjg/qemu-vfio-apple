@@ -49,7 +49,8 @@ struct RISCVIOMMUSpace {
     IOMMUMemoryRegion iova_mr;  /* IOVA memory region for attached device */
     AddressSpace iova_as;       /* IOVA address space for attached device */
     RISCVIOMMUState *iommu;     /* Managing IOMMU device state */
-    uint32_t devid;             /* Requester identifier, AKA device_id */
+    PCIBus *bus;                /* PCI bus of the requester */
+    uint8_t devfn;              /* Requester identifier, AKA device_id */
     bool notifier;              /* IOMMU unmap notifier enabled */
     QLIST_ENTRY(RISCVIOMMUSpace) list;
 };
@@ -73,6 +74,15 @@ struct RISCVIOMMUEntry {
 
 /* IOMMU index for transactions without process_id specified. */
 #define RISCV_IOMMU_NOPROCID 0
+
+static uint32_t riscv_iommu_space_devid(RISCVIOMMUSpace *as)
+{
+    uint32_t devid = PCI_BUILD_BDF(pci_bus_num(as->bus), as->devfn);
+
+    /* FIXME: PCIe bus remapping for attached endpoints. */
+    devid |= as->iommu->bus << 8;
+    return devid;
+}
 
 static uint8_t riscv_iommu_get_icvec_vector(uint32_t icvec, uint32_t vec_type)
 {
@@ -235,6 +245,25 @@ static bool riscv_iommu_msi_check(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
     }
 
     return true;
+}
+
+/* Returns the NAPOT page mask, or 0 for reserved encodings. */
+static hwaddr riscv_iommu_napot_page_mask(hwaddr ppn, hwaddr addr, hwaddr *out)
+{
+    int napot_bits = ctz64(ppn) + 1;
+    hwaddr napot_mask, page_mask;
+
+    /* The spec only defines 64KB (napot_bits == 4) */
+    if (napot_bits != 4) {
+        return 0;
+    }
+
+    napot_mask = (1ULL << napot_bits) - 1;
+    page_mask = PPN_PHYS(napot_mask) | (TARGET_PAGE_SIZE - 1);
+
+    *out = PPN_PHYS(ppn & ~napot_mask) | (addr & page_mask);
+
+    return page_mask;
 }
 
 /*
@@ -451,16 +480,27 @@ static int riscv_iommu_spa_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
             break;                /* Read access check failed */
         } else if ((iotlb->perm & IOMMU_WO) && !(pte & PTE_W)) {
             break;                /* Write access check failed */
-        } else if ((iotlb->perm & IOMMU_RO) && !ade && !(pte & PTE_A)) {
+        } else if (!ade && !(pte & PTE_A)) {
             break;                /* Access bit not set */
         } else if ((iotlb->perm & IOMMU_WO) && !ade && !(pte & PTE_D)) {
             break;                /* Dirty bit not set */
         } else {
             /* Leaf PTE, translation completed. */
             sc[pass].step = sc[pass].levels;
-            base = PPN_PHYS(ppn) | (addr & ((1ULL << va_skip) - 1));
-            /* Update address mask based on smallest translation granularity */
-            iotlb->addr_mask &= (1ULL << va_skip) - 1;
+
+            if (pte & PTE_N) {
+                hwaddr mask = riscv_iommu_napot_page_mask(ppn, addr, &base);
+
+                if (!mask) {
+                    break;
+                }
+                iotlb->addr_mask &= mask;
+            } else {
+                base = PPN_PHYS(ppn) | (addr & ((1ULL << va_skip) - 1));
+                /* Update address mask based on smallest translation granularity */
+                iotlb->addr_mask &= (1ULL << va_skip) - 1;
+            }
+
             /* Continue with S-Stage translation? */
             if (pass && sc[0].step != sc[0].levels) {
                 pass = S_STAGE;
@@ -540,7 +580,7 @@ static void riscv_iommu_report_fault(RISCVIOMMUState *s,
     ev.hdr = set_field(ev.hdr, RISCV_IOMMU_FQ_HDR_CAUSE, cause);
     ev.hdr = set_field(ev.hdr, RISCV_IOMMU_FQ_HDR_TTYPE, fault_type);
     ev.hdr = set_field(ev.hdr, RISCV_IOMMU_FQ_HDR_DID, ctx->devid);
-    ev.hdr = set_field(ev.hdr, RISCV_IOMMU_FQ_HDR_PV, true);
+    ev.hdr = set_field(ev.hdr, RISCV_IOMMU_FQ_HDR_PV, pv);
 
     if (pv) {
         ev.hdr = set_field(ev.hdr, RISCV_IOMMU_FQ_HDR_PID, ctx->process_id);
@@ -646,7 +686,26 @@ static MemTxResult riscv_iommu_msi_write(RISCVIOMMUState *s,
 
     /* MRIF pending bit address */
     addr = get_field(pte[0], RISCV_IOMMU_MSI_PTE_MRIF_ADDR) << 9;
-    addr = addr | ((data & 0x7c0) >> 3);
+    /*
+     * AIA spec section "Format of a memory-resident interrupt file":
+     * address offset 0x000 contains interrupt-pending bits for
+     * identities 1-63, offfset 0x010 for identities 64-127, and
+     * so it goes up to 0x1F0 for identities 1984-2047.
+     *
+     * Hence each batch of identities advances offset by 16 (0x010)
+     * for every interrupt-pending bits.  This means that doing
+     * (data & 0x7c0) will filter out the first 6 bits, then
+     * a >> 2 will turn the result in the 0x10 steps we need.
+     *
+     * E.g:
+     *
+     * - (1-63 & 0x7c0) = 0, 0 >> 2 = 0, offset 0x000
+     * - (64-127 & 0x7c0) = 64, 64 >> 2 = 16, offset 0x010
+     * - (128-191 & 0x7c0) = 128, 128 >> 2 = 32, offset 0x020
+     *
+     * and so on.
+     */
+    addr = addr | ((data & 0x7c0) >> 2);
 
     trace_riscv_iommu_msi(s->parent_obj.id, PCI_BUS_NUM(ctx->devid),
                           PCI_SLOT(ctx->devid), PCI_FUNC(ctx->devid),
@@ -711,6 +770,10 @@ static bool riscv_iommu_validate_device_ctx(RISCVIOMMUState *s,
 {
     uint32_t fsc_mode, msi_mode;
     uint64_t gatp;
+
+    if (ctx->tc & RISCV_IOMMU_DC_TC_RESERVED) {
+        return false;
+    }
 
     if (!(s->cap & RISCV_IOMMU_CAP_ATS) &&
         (ctx->tc & RISCV_IOMMU_DC_TC_EN_ATS ||
@@ -777,7 +840,7 @@ static bool riscv_iommu_validate_device_ctx(RISCVIOMMUState *s,
         }
 
         if (ctx->tc & RISCV_IOMMU_DC_TC_SXL) {
-            if (fsc_mode == RISCV_IOMMU_CAP_SV32 &&
+            if (fsc_mode == RISCV_IOMMU_DC_FSC_IOSATP_MODE_SV32 &&
                 !(s->cap & RISCV_IOMMU_CAP_SV32)) {
                 return false;
             }
@@ -997,7 +1060,13 @@ static MemTxResult pdt_memory_read(RISCVIOMMUState *s,
             return MEMTX_ACCESS_ERROR; /* Misaligned PPN */
         } else {
             /* Leaf PTE, translation completed. */
-            base = PPN_PHYS(ppn) | (addr & ((1ULL << va_skip) - 1));
+            if (pte & PTE_N) {
+                if (!riscv_iommu_napot_page_mask(ppn, addr, &base)) {
+                    return MEMTX_ACCESS_ERROR;
+                }
+            } else {
+                base = PPN_PHYS(ppn) | (addr & ((1ULL << va_skip) - 1));
+            }
             break;
         }
 
@@ -1312,16 +1381,23 @@ static RISCVIOMMUContext *riscv_iommu_ctx(RISCVIOMMUState *s,
 
     int fault = riscv_iommu_ctx_fetch(s, ctx);
     if (!fault) {
-        if (g_hash_table_size(ctx_cache) >= LIMIT_CACHE_CTX) {
+        if (mode != RISCV_IOMMU_DDTP_MODE_BARE) {
+            if (g_hash_table_size(ctx_cache) >= LIMIT_CACHE_CTX) {
+                g_hash_table_unref(ctx_cache);
+                ctx_cache = g_hash_table_new_full(riscv_iommu_ctx_hash,
+                                                  riscv_iommu_ctx_equal,
+                                                  g_free, NULL);
+                g_hash_table_ref(ctx_cache);
+                g_hash_table_unref(qatomic_xchg(&s->ctx_cache, ctx_cache));
+            }
+
+            g_hash_table_add(ctx_cache, ctx);
+            *ref = ctx_cache;
+        } else {
             g_hash_table_unref(ctx_cache);
-            ctx_cache = g_hash_table_new_full(riscv_iommu_ctx_hash,
-                                              riscv_iommu_ctx_equal,
-                                              g_free, NULL);
-            g_hash_table_ref(ctx_cache);
-            g_hash_table_unref(qatomic_xchg(&s->ctx_cache, ctx_cache));
+            /* Remember ctx so it can be freed */
+            *ref = ctx;
         }
-        g_hash_table_add(ctx_cache, ctx);
-        *ref = ctx_cache;
         return ctx;
     }
 
@@ -1337,21 +1413,28 @@ static RISCVIOMMUContext *riscv_iommu_ctx(RISCVIOMMUState *s,
 
 static void riscv_iommu_ctx_put(RISCVIOMMUState *s, void *ref)
 {
-    if (ref) {
+    unsigned mode = get_field(s->ddtp, RISCV_IOMMU_DDTP_MODE);
+
+    if (!ref) {
+        return;
+    }
+
+    /* ref is pointing to ctx in Bare mode. Bare mode ctx is not cached */
+    if (mode == RISCV_IOMMU_DDTP_MODE_BARE) {
+        g_free(ref);
+    } else {
         g_hash_table_unref((GHashTable *)ref);
     }
 }
 
 /* Find or allocate address space for a given device */
-static AddressSpace *riscv_iommu_space(RISCVIOMMUState *s, uint32_t devid)
+static AddressSpace *riscv_iommu_space(RISCVIOMMUState *s, PCIBus *bus,
+                                            int devfn)
 {
     RISCVIOMMUSpace *as;
 
-    /* FIXME: PCIe bus remapping for attached endpoints. */
-    devid |= s->bus << 8;
-
     QLIST_FOREACH(as, &s->spaces, list) {
-        if (as->devid == devid) {
+        if (as->bus == bus && as->devfn == devfn) {
             break;
         }
     }
@@ -1361,10 +1444,11 @@ static AddressSpace *riscv_iommu_space(RISCVIOMMUState *s, uint32_t devid)
         as = g_new0(RISCVIOMMUSpace, 1);
 
         as->iommu = s;
-        as->devid = devid;
+        as->bus = bus;
+        as->devfn = devfn;
 
         snprintf(name, sizeof(name), "riscv-iommu-%04x:%02x.%d-iova",
-            PCI_BUS_NUM(as->devid), PCI_SLOT(as->devid), PCI_FUNC(as->devid));
+            pci_bus_num(bus), PCI_SLOT(devfn), PCI_FUNC(devfn));
 
         /* IOVA address space, untranslated addresses */
         memory_region_init_iommu(&as->iova_mr, sizeof(as->iova_mr),
@@ -1374,8 +1458,8 @@ static AddressSpace *riscv_iommu_space(RISCVIOMMUState *s, uint32_t devid)
 
         QLIST_INSERT_HEAD(&s->spaces, as, list);
 
-        trace_riscv_iommu_new(s->parent_obj.id, PCI_BUS_NUM(as->devid),
-                PCI_SLOT(as->devid), PCI_FUNC(as->devid));
+        trace_riscv_iommu_new(s->parent_obj.id, pci_bus_num(bus),
+                PCI_SLOT(devfn), PCI_FUNC(devfn));
     }
     return &as->iova_as;
 }
@@ -1678,7 +1762,7 @@ static void riscv_iommu_ats(RISCVIOMMUState *s,
     IOMMUAccessFlags perm,
     void (*trace_fn)(const char *id))
 {
-    RISCVIOMMUSpace *as = NULL;
+    RISCVIOMMUSpace *as;
     IOMMUNotifier *n;
     IOMMUTLBEvent event;
     uint32_t pid;
@@ -1696,7 +1780,7 @@ static void riscv_iommu_ats(RISCVIOMMUState *s,
     pid = get_field(cmd->dword0, RISCV_IOMMU_CMD_ATS_PID);
 
     QLIST_FOREACH(as, &s->spaces, list) {
-        if (as->devid == devid) {
+        if (riscv_iommu_space_devid(as) == devid) {
             break;
         }
     }
@@ -1815,6 +1899,10 @@ static void riscv_iommu_process_cq_tail(RISCVIOMMUState *s)
         switch (cmd_opcode) {
         case RISCV_IOMMU_CMD(RISCV_IOMMU_CMD_IOFENCE_FUNC_C,
                              RISCV_IOMMU_CMD_IOFENCE_OPCODE):
+            if (cmd.dword0 & RISCV_IOMMU_CMD_IOFENCE_RESERVED) {
+                goto cmd_ill;
+            }
+
             res = riscv_iommu_iofence(s,
                 cmd.dword0 & RISCV_IOMMU_CMD_IOFENCE_AV, cmd.dword1 << 2,
                 get_field(cmd.dword0, RISCV_IOMMU_CMD_IOFENCE_DATA));
@@ -1973,8 +2061,8 @@ static void riscv_iommu_process_cq_control(RISCVIOMMUState *s)
         s->cq_mask = (2ULL << get_field(base, RISCV_IOMMU_CQB_LOG2SZ)) - 1;
         s->cq_addr = PPN_PHYS(get_field(base, RISCV_IOMMU_CQB_PPN));
         stl_le_p(&s->regs_ro[RISCV_IOMMU_REG_CQT], ~s->cq_mask);
-        stl_le_p(&s->regs_rw[RISCV_IOMMU_REG_CQH], 0);
-        stl_le_p(&s->regs_rw[RISCV_IOMMU_REG_CQT], 0);
+        stl_le_p(&s->regs[RISCV_IOMMU_REG_CQH], 0);
+        stl_le_p(&s->regs[RISCV_IOMMU_REG_CQT], 0);
         ctrl_set = RISCV_IOMMU_CQCSR_CQON;
         ctrl_clr = RISCV_IOMMU_CQCSR_BUSY | RISCV_IOMMU_CQCSR_CQMF |
                    RISCV_IOMMU_CQCSR_CMD_ILL | RISCV_IOMMU_CQCSR_CMD_TO |
@@ -1989,6 +2077,16 @@ static void riscv_iommu_process_cq_control(RISCVIOMMUState *s)
     }
 
     riscv_iommu_reg_mod32(s, RISCV_IOMMU_REG_CQCSR, ctrl_set, ctrl_clr);
+
+    /*
+     * After clearing error bits (CMD_ILL, CQMF), if queue is still active,
+     * re-process pending command.
+     */
+    ctrl_set = riscv_iommu_reg_get32(s, RISCV_IOMMU_REG_CQCSR);
+    if ((ctrl_set & RISCV_IOMMU_CQCSR_CQON) &&
+        !(ctrl_set & (RISCV_IOMMU_CQCSR_CMD_ILL | RISCV_IOMMU_CQCSR_CQMF))) {
+        riscv_iommu_process_cq_tail(s);
+    }
 }
 
 static void riscv_iommu_process_fq_control(RISCVIOMMUState *s)
@@ -2004,8 +2102,8 @@ static void riscv_iommu_process_fq_control(RISCVIOMMUState *s)
         s->fq_mask = (2ULL << get_field(base, RISCV_IOMMU_FQB_LOG2SZ)) - 1;
         s->fq_addr = PPN_PHYS(get_field(base, RISCV_IOMMU_FQB_PPN));
         stl_le_p(&s->regs_ro[RISCV_IOMMU_REG_FQH], ~s->fq_mask);
-        stl_le_p(&s->regs_rw[RISCV_IOMMU_REG_FQH], 0);
-        stl_le_p(&s->regs_rw[RISCV_IOMMU_REG_FQT], 0);
+        stl_le_p(&s->regs[RISCV_IOMMU_REG_FQH], 0);
+        stl_le_p(&s->regs[RISCV_IOMMU_REG_FQT], 0);
         ctrl_set = RISCV_IOMMU_FQCSR_FQON;
         ctrl_clr = RISCV_IOMMU_FQCSR_BUSY | RISCV_IOMMU_FQCSR_FQMF |
             RISCV_IOMMU_FQCSR_FQOF;
@@ -2034,8 +2132,8 @@ static void riscv_iommu_process_pq_control(RISCVIOMMUState *s)
         s->pq_mask = (2ULL << get_field(base, RISCV_IOMMU_PQB_LOG2SZ)) - 1;
         s->pq_addr = PPN_PHYS(get_field(base, RISCV_IOMMU_PQB_PPN));
         stl_le_p(&s->regs_ro[RISCV_IOMMU_REG_PQH], ~s->pq_mask);
-        stl_le_p(&s->regs_rw[RISCV_IOMMU_REG_PQH], 0);
-        stl_le_p(&s->regs_rw[RISCV_IOMMU_REG_PQT], 0);
+        stl_le_p(&s->regs[RISCV_IOMMU_REG_PQH], 0);
+        stl_le_p(&s->regs[RISCV_IOMMU_REG_PQT], 0);
         ctrl_set = RISCV_IOMMU_PQCSR_PQON;
         ctrl_clr = RISCV_IOMMU_PQCSR_BUSY | RISCV_IOMMU_PQCSR_PQMF |
             RISCV_IOMMU_PQCSR_PQOF;
@@ -2205,9 +2303,9 @@ static void riscv_iommu_write_reg_val(RISCVIOMMUState *s,
 {
     uint64_t ro = ldn_le_p(&s->regs_ro[reg_addr], size);
     uint64_t wc = ldn_le_p(&s->regs_wc[reg_addr], size);
-    uint64_t rw = ldn_le_p(&s->regs_rw[reg_addr], size);
+    uint64_t curr_val = ldn_le_p(&s->regs[reg_addr], size);
 
-    stn_le_p(dest, size, ((rw & ro) | (data & ~ro)) & ~(data & wc));
+    stn_le_p(dest, size, ((curr_val & ro) | (data & ~ro)) & ~(data & wc));
 }
 
 static MemTxResult riscv_iommu_mmio_write(void *opaque, hwaddr addr,
@@ -2307,12 +2405,12 @@ static MemTxResult riscv_iommu_mmio_write(void *opaque, hwaddr addr,
      * is set IOMMU behavior of additional writes to the register
      * is UNSPECIFIED.
      */
-    riscv_iommu_write_reg_val(s, &s->regs_rw[addr], addr, size, data);
+    riscv_iommu_write_reg_val(s, &s->regs[addr], addr, size, data);
 
     /* Busy flag update, MSB 4-byte register. */
     if (busy) {
-        uint32_t rw = ldl_le_p(&s->regs_rw[regb]);
-        stl_le_p(&s->regs_rw[regb], rw | busy);
+        uint32_t rw = ldl_le_p(&s->regs[regb]);
+        stl_le_p(&s->regs[regb], rw | busy);
     }
 
     /* Process HPM writes and update any internal state if needed. */
@@ -2357,13 +2455,13 @@ static MemTxResult riscv_iommu_mmio_read(void *opaque, hwaddr addr,
          * it's not dependent over the timer callback and is computed
          * from cycle overflow.
          */
-        val = ldq_le_p(&s->regs_rw[addr]);
+        val = ldq_le_p(&s->regs[addr]);
         val |= (riscv_iommu_hpmcycle_read(s) & RISCV_IOMMU_IOHPMCYCLES_OVF)
                    ? RISCV_IOMMU_IOCOUNTOVF_CY
                    : 0;
         ptr = (uint8_t *)&val + (addr & 3);
     } else {
-        ptr = &s->regs_rw[addr];
+        ptr = &s->regs[addr];
     }
 
     val = ldn_le_p(ptr, size);
@@ -2434,7 +2532,6 @@ static const MemoryRegionOps riscv_iommu_trap_ops = {
     .impl = {
         .min_access_size = 4,
         .max_access_size = 8,
-        .unaligned = true,
     },
     .valid = {
         .min_access_size = 4,
@@ -2459,7 +2556,7 @@ static void riscv_iommu_instance_init(Object *obj)
     s->cap |= RISCV_IOMMU_CAP_PD8;
 
     /* register storage */
-    s->regs_rw = g_new0(uint8_t, RISCV_IOMMU_REG_SIZE);
+    s->regs = g_new0(uint8_t, RISCV_IOMMU_REG_SIZE);
     s->regs_ro = g_new0(uint8_t, RISCV_IOMMU_REG_SIZE);
     s->regs_wc = g_new0(uint8_t, RISCV_IOMMU_REG_SIZE);
 
@@ -2484,7 +2581,7 @@ static void riscv_iommu_instance_finalize(Object *obj)
 {
     RISCVIOMMUState *s = RISCV_IOMMU(obj);
 
-    g_free(s->regs_rw);
+    g_free(s->regs);
     g_free(s->regs_ro);
     g_free(s->regs_wc);
 
@@ -2538,10 +2635,12 @@ static void riscv_iommu_realize(DeviceState *dev, Error **errp)
         "riscv-iommu-regs", RISCV_IOMMU_REG_SIZE);
 
     /* Set power-on register state */
-    stq_le_p(&s->regs_rw[RISCV_IOMMU_REG_CAP], s->cap);
-    stq_le_p(&s->regs_rw[RISCV_IOMMU_REG_FCTL], 0);
+    stq_le_p(&s->regs[RISCV_IOMMU_REG_CAP], s->cap);
+
+    stq_le_p(&s->regs[RISCV_IOMMU_REG_FCTL], 0);
     stq_le_p(&s->regs_ro[RISCV_IOMMU_REG_FCTL],
-             ~(RISCV_IOMMU_FCTL_BE | RISCV_IOMMU_FCTL_WSI));
+             ~(RISCV_IOMMU_FCTL_GXL | RISCV_IOMMU_FCTL_WSI));
+
     stq_le_p(&s->regs_ro[RISCV_IOMMU_REG_DDTP],
         ~(RISCV_IOMMU_DDTP_PPN | RISCV_IOMMU_DDTP_MODE));
     stq_le_p(&s->regs_ro[RISCV_IOMMU_REG_CQB],
@@ -2564,7 +2663,7 @@ static void riscv_iommu_realize(DeviceState *dev, Error **errp)
         RISCV_IOMMU_PQCSR_BUSY);
     stl_le_p(&s->regs_wc[RISCV_IOMMU_REG_IPSR], ~0);
     stl_le_p(&s->regs_ro[RISCV_IOMMU_REG_ICVEC], 0);
-    stq_le_p(&s->regs_rw[RISCV_IOMMU_REG_DDTP], s->ddtp);
+    stq_le_p(&s->regs[RISCV_IOMMU_REG_DDTP], s->ddtp);
     /* If debug registers enabled. */
     if (s->cap & RISCV_IOMMU_CAP_DBG) {
         stq_le_p(&s->regs_ro[RISCV_IOMMU_REG_TR_REQ_IOVA], 0);
@@ -2710,8 +2809,9 @@ static IOMMUTLBEntry riscv_iommu_memory_region_translate(
         .addr_mask = ~0ULL,
         .perm = flag,
     };
+    uint32_t devid = riscv_iommu_space_devid(as);
 
-    ctx = riscv_iommu_ctx(as->iommu, as->devid, iommu_idx, &ref);
+    ctx = riscv_iommu_ctx(as->iommu, devid, iommu_idx, &ref);
     if (ctx == NULL) {
         /* Translation disabled or invalid. */
         iotlb.addr_mask = 0;
@@ -2723,8 +2823,8 @@ static IOMMUTLBEntry riscv_iommu_memory_region_translate(
     }
 
     /* Trace all dma translations with original access flags. */
-    trace_riscv_iommu_dma(as->iommu->parent_obj.id, PCI_BUS_NUM(as->devid),
-                          PCI_SLOT(as->devid), PCI_FUNC(as->devid), iommu_idx,
+    trace_riscv_iommu_dma(as->iommu->parent_obj.id, PCI_BUS_NUM(devid),
+                          PCI_SLOT(devid), PCI_FUNC(devid), iommu_idx,
                           IOMMU_FLAG_STR[flag & IOMMU_RW], iotlb.iova,
                           iotlb.translated_addr);
 
@@ -2772,7 +2872,7 @@ static AddressSpace *riscv_iommu_find_as(PCIBus *bus, void *opaque, int devfn)
 
     /* Find first matching IOMMU */
     while (s != NULL && as == NULL) {
-        as = riscv_iommu_space(s, PCI_BUILD_BDF(pci_bus_num(bus), devfn));
+        as = riscv_iommu_space(s, bus, devfn);
         s = s->iommus.le_next;
     }
 

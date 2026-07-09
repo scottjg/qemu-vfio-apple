@@ -284,6 +284,7 @@ static void pr_manager_helper_instance_finalize(Object *obj)
 {
     PRManagerHelper *pr_mgr = PR_MANAGER_HELPER(obj);
 
+    g_free(pr_mgr->path);
     object_unref(OBJECT(pr_mgr->ioc));
     qemu_mutex_destroy(&pr_mgr->lock);
 }

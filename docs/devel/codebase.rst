@@ -8,6 +8,11 @@ organized.
 Beyond giving succinct descriptions, the goal is to offer links to various
 parts of the documentation/codebase.
 
+Those two videos are an excellent introduction to QEMU codebase:
+
+- `QEMU Dev Starter guide - General overview <https://www.youtube.com/watch?v=OCBLTMKLGAk>`_
+- `QEMU Dev Starter guide - System mode <https://www.youtube.com/watch?v=jrZ56K3Sl_k>`_
+
 Subsystems
 ----------
 

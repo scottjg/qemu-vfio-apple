@@ -76,6 +76,11 @@ config VIRTIO_MEM
     depends on VIRTIO_MEM_SUPPORTED
     select VIRTIO_MD
 
+config VIRTIO_RTC
+    bool
+    default y
+    depends on VIRTIO
+
 config VHOST_VSOCK_COMMON
     bool
     depends on VIRTIO
@@ -133,6 +138,11 @@ config VHOST_USER_SPI
     depends on VIRTIO && VHOST_USER
 
 config VHOST_USER_TEST
+    bool
+    default y
+    depends on VIRTIO && VHOST_USER
+
+config VHOST_USER_RTC
     bool
     default y
     depends on VIRTIO && VHOST_USER

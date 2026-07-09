@@ -775,8 +775,11 @@ static int local_fid_fd(int fid_type, V9fsFidOpenState *fs)
 {
     if (fid_type == P9_FID_DIR) {
         return dirfd(fs->dir.stream);
-    } else {
+    } else if (fid_type == P9_FID_FILE) {
         return fs->fd;
+    } else {
+        errno = EBADF;
+        return -1;
     }
 }
 
@@ -1261,26 +1264,35 @@ static int local_name_to_path(FsContext *ctx, V9fsPath *dir_path,
         } else if (!strcmp(name, "..")) {
             if (!strcmp(dir_path->data, ".")) {
                 /* ".." relative to the root is "." */
-                v9fs_path_sprintf(target, ".");
+                if (v9fs_path_sprintf(target, ".") < 0) {
+                    return -1;
+                }
             } else {
-                char *tmp = g_path_get_dirname(dir_path->data);
+                g_autofree char *tmp = g_path_get_dirname(dir_path->data);
                 /* Symbolic links are resolved by the client. We can assume
                  * that ".." relative to "foo/bar" is equivalent to "foo"
                  */
-                v9fs_path_sprintf(target, "%s", tmp);
-                g_free(tmp);
+                if (v9fs_path_sprintf(target, "%s", tmp) < 0) {
+                    return -1;
+                }
             }
         } else {
             assert(!strchr(name, '/'));
-            v9fs_path_sprintf(target, "%s/%s", dir_path->data, name);
+            if (v9fs_path_sprintf(target, "%s/%s", dir_path->data, name) < 0) {
+                return -1;
+            }
         }
     } else if (!strcmp(name, "/") || !strcmp(name, ".") ||
                !strcmp(name, "..")) {
             /* This is the root fid */
-        v9fs_path_sprintf(target, ".");
+        if (v9fs_path_sprintf(target, ".") < 0) {
+            return -1;
+        }
     } else {
         assert(!strchr(name, '/'));
-        v9fs_path_sprintf(target, "./%s", name);
+        if (v9fs_path_sprintf(target, "./%s", name) < 0) {
+            return -1;
+        }
     }
     return 0;
 }
@@ -1517,6 +1529,15 @@ static int local_parse_opts(QemuOpts *opts, FsDriverEntry *fse, Error **errp)
     const char *sec_model = qemu_opt_get(opts, "security_model");
     const char *path = qemu_opt_get(opts, "path");
     const char *multidevs = qemu_opt_get(opts, "multidevs");
+
+    uint64_t val = qemu_opt_get_number(opts, "max_xattr",
+                                       V9FS_MAX_XATTR_DEFAULT);
+    if (val > UINT32_MAX) {
+        error_setg(errp, "max_xattr value '%s' too large",
+                   qemu_opt_get(opts, "max_xattr"));
+        return -1;
+    }
+    fse->max_xattr = val;
 
     if (!sec_model) {
         error_setg(errp, "security_model property not set");

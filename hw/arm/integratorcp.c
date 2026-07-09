@@ -23,7 +23,6 @@
 #include "qemu/log.h"
 #include "qemu/error-report.h"
 #include "hw/char/pl011.h"
-#include "hw/core/hw-error.h"
 #include "hw/core/irq.h"
 #include "hw/sd/sd.h"
 #include "qom/object.h"
@@ -178,10 +177,17 @@ static void integratorcm_set_ctrl(IntegratorCMState *s, uint32_t value)
 
 static void integratorcm_update(IntegratorCMState *s)
 {
-    /* ??? The CPU irq/fiq is raised when either the core module or base PIC
-       are active.  */
-    if (s->int_level & (s->irq_enabled | s->fiq_enabled))
-        hw_error("Core module interrupt\n");
+    /*
+     * ??? The CPU irq/fiq is raised when either the core module or base PIC
+     * are active. To implement this we would need to run these signals
+     * through an OR gate with the PIC outputs. In practice guests don't
+     * use this, which is intended for an external debugger.
+     */
+    if (s->int_level & (s->irq_enabled | s->fiq_enabled)) {
+        qemu_log_mask(LOG_UNIMP,
+                      "%s: raising IRQ/FIQ via core module registers is not implemented\n",
+                      __func__);
+    }
 }
 
 static void integratorcm_write(void *opaque, hwaddr offset,

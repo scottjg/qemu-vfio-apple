@@ -104,8 +104,6 @@ bool kvm_readonly_mem_allowed;
 bool kvm_vm_attributes_allowed;
 bool kvm_msi_use_devid;
 bool kvm_pre_fault_memory_supported;
-static bool kvm_has_guest_debug;
-static int kvm_sstep_flags;
 static bool kvm_immediate_exit;
 static uint64_t kvm_supported_memory_attributes;
 static bool kvm_guest_memfd_supported;
@@ -2359,11 +2357,11 @@ int kvm_irqchip_send_msi(KVMState *s, MSIMessage msg)
     return kvm_vm_ioctl(s, KVM_SIGNAL_MSI, &msi);
 }
 
-int kvm_irqchip_add_msi_route(KVMRouteChange *c, int vector, PCIDevice *dev)
+int kvm_irqchip_add_msi_route(AccelRouteChange *c, int vector, PCIDevice *dev)
 {
     struct kvm_irq_routing_entry kroute = {};
     int virq;
-    KVMState *s = c->s;
+    KVMState *s = KVM_STATE(c->accel);
     MSIMessage msg = {0, 0};
 
     if (pci_available && dev) {
@@ -2506,7 +2504,7 @@ int kvm_irqchip_send_msi(KVMState *s, MSIMessage msg)
     abort();
 }
 
-int kvm_irqchip_add_msi_route(KVMRouteChange *c, int vector, PCIDevice *dev)
+int kvm_irqchip_add_msi_route(AccelRouteChange *c, int vector, PCIDevice *dev)
 {
     return -ENOSYS;
 }
@@ -3038,23 +3036,17 @@ static int kvm_init(AccelState *as, MachineState *ms)
         (kvm_check_extension(s, KVM_CAP_VM_ATTRIBUTES) > 0);
 
 #ifdef TARGET_KVM_HAVE_GUEST_DEBUG
-    kvm_has_guest_debug =
-        (kvm_check_extension(s, KVM_CAP_SET_GUEST_DEBUG) > 0);
-#endif
+    if (kvm_check_extension(s, KVM_CAP_SET_GUEST_DEBUG) > 0) {
+        as->gdbstub.sstep_flags = SSTEP_ENABLE;
 
-    kvm_sstep_flags = 0;
-    if (kvm_has_guest_debug) {
-        kvm_sstep_flags = SSTEP_ENABLE;
-
-#if defined TARGET_KVM_HAVE_GUEST_DEBUG
         int guest_debug_flags =
             kvm_check_extension(s, KVM_CAP_SET_GUEST_DEBUG2);
 
         if (guest_debug_flags & KVM_GUESTDBG_BLOCKIRQ) {
-            kvm_sstep_flags |= SSTEP_NOIRQ;
+            as->gdbstub.sstep_flags |= SSTEP_NOIRQ;
         }
-#endif
     }
+#endif
 
     kvm_state = s;
 
@@ -3178,16 +3170,12 @@ void kvm_flush_coalesced_mmio_buffer(void)
         struct kvm_coalesced_mmio_ring *ring = s->coalesced_mmio_ring;
         while (ring->first != ring->last) {
             struct kvm_coalesced_mmio *ent;
+            const AddressSpace *as;
 
             ent = &ring->coalesced_mmio[ring->first];
-
-            if (ent->pio == 1) {
-                address_space_write(&address_space_io, ent->phys_addr,
-                                    MEMTXATTRS_UNSPECIFIED, ent->data,
-                                    ent->len);
-            } else {
-                cpu_physical_memory_write(ent->phys_addr, ent->data, ent->len);
-            }
+            as = ent->pio == 1 ? &address_space_io : &address_space_memory;
+            address_space_write(as, ent->phys_addr, MEMTXATTRS_UNSPECIFIED,
+                                ent->data, ent->len);
             smp_wmb();
             ring->first = (ring->first + 1) % KVM_COALESCED_MMIO_MAX;
         }
@@ -3426,7 +3414,7 @@ int kvm_convert_memory(hwaddr start, hwaddr size, bool to_private)
              */
             goto out_unref;
         }
-        ret = ram_block_discard_range(rb, offset, size);
+        ret = ram_block_discard_shared_range(rb, offset, size);
     } else {
         ret = ram_block_discard_guest_memfd_range(rb, offset, size);
     }
@@ -3824,10 +3812,10 @@ int kvm_update_guest_debug(CPUState *cpu, unsigned long reinject_trap)
 
     data.dbg.control = reinject_trap;
 
-    if (cpu->singlestep_enabled) {
+    if (cpu_single_stepping(cpu)) {
         data.dbg.control |= KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
 
-        if (cpu->singlestep_enabled & SSTEP_NOIRQ) {
+        if (cpu->singlestep_flags & SSTEP_NOIRQ) {
             data.dbg.control |= KVM_GUESTDBG_BLOCKIRQ;
         }
     }
@@ -3838,13 +3826,8 @@ int kvm_update_guest_debug(CPUState *cpu, unsigned long reinject_trap)
     return data.err;
 }
 
-bool kvm_supports_guest_debug(void)
-{
-    /* probed during kvm_init() */
-    return kvm_has_guest_debug;
-}
-
-int kvm_insert_breakpoint(CPUState *cpu, int type, vaddr addr, vaddr len)
+int kvm_insert_gdbstub_breakpoint(CPUState *cpu, GdbBreakpointType type,
+                                  vaddr addr, vaddr len)
 {
     struct kvm_sw_breakpoint *bp;
     int err;
@@ -3867,7 +3850,7 @@ int kvm_insert_breakpoint(CPUState *cpu, int type, vaddr addr, vaddr len)
 
         QTAILQ_INSERT_HEAD(&cpu->kvm_state->kvm_sw_breakpoints, bp, entry);
     } else {
-        err = kvm_arch_insert_hw_breakpoint(addr, len, type);
+        err = kvm_arch_insert_gdbstub_hw_breakpoint(addr, len, type);
         if (err) {
             return err;
         }
@@ -3882,7 +3865,8 @@ int kvm_insert_breakpoint(CPUState *cpu, int type, vaddr addr, vaddr len)
     return 0;
 }
 
-int kvm_remove_breakpoint(CPUState *cpu, int type, vaddr addr, vaddr len)
+int kvm_remove_gdbstub_breakpoint(CPUState *cpu, GdbBreakpointType type,
+                                  vaddr addr, vaddr len)
 {
     struct kvm_sw_breakpoint *bp;
     int err;
@@ -3906,7 +3890,7 @@ int kvm_remove_breakpoint(CPUState *cpu, int type, vaddr addr, vaddr len)
         QTAILQ_REMOVE(&cpu->kvm_state->kvm_sw_breakpoints, bp, entry);
         g_free(bp);
     } else {
-        err = kvm_arch_remove_hw_breakpoint(addr, len, type);
+        err = kvm_arch_remove_gdbstub_hw_breakpoint(addr, len, type);
         if (err) {
             return err;
         }
@@ -3921,7 +3905,7 @@ int kvm_remove_breakpoint(CPUState *cpu, int type, vaddr addr, vaddr len)
     return 0;
 }
 
-void kvm_remove_all_breakpoints(CPUState *cpu)
+void kvm_remove_all_gdbstub_breakpoints(CPUState *cpu)
 {
     struct kvm_sw_breakpoint *bp, *next;
     KVMState *s = cpu->kvm_state;
@@ -3939,7 +3923,7 @@ void kvm_remove_all_breakpoints(CPUState *cpu)
         QTAILQ_REMOVE(&s->kvm_sw_breakpoints, bp, entry);
         g_free(bp);
     }
-    kvm_arch_remove_all_hw_breakpoints();
+    kvm_arch_remove_all_gdbstub_hw_breakpoints();
 
     CPU_FOREACH(cpu) {
         kvm_update_guest_debug(cpu, 0);
@@ -4285,17 +4269,6 @@ static void kvm_accel_instance_init(Object *obj)
     s->honor_guest_pat = ON_OFF_AUTO_OFF;
 }
 
-/**
- * kvm_gdbstub_sstep_flags():
- *
- * Returns: SSTEP_* flags that KVM supports for guest debug. The
- * support is probed during kvm_init()
- */
-static int kvm_gdbstub_sstep_flags(AccelState *as)
-{
-    return kvm_sstep_flags;
-}
-
 static void kvm_accel_class_init(ObjectClass *oc, const void *data)
 {
     AccelClass *ac = ACCEL_CLASS(oc);
@@ -4304,7 +4277,6 @@ static void kvm_accel_class_init(ObjectClass *oc, const void *data)
     ac->rebuild_guest = kvm_reset_vmfd;
     ac->has_memory = kvm_accel_has_memory;
     ac->allowed = &kvm_allowed;
-    ac->gdbstub_supported_sstep_flags = kvm_gdbstub_sstep_flags;
 
     object_class_property_add(oc, "kernel-irqchip", "on|off|split",
         NULL, kvm_set_kernel_irqchip,
@@ -4342,10 +4314,18 @@ static void kvm_accel_class_init(ObjectClass *oc, const void *data)
     kvm_arch_accel_class_init(oc);
 }
 
+static void kvm_accel_finalize(Object *obj)
+{
+    KVMState *s = KVM_STATE(obj);
+
+    g_free(s->device);
+}
+
 static const TypeInfo kvm_accel_type = {
     .name = TYPE_KVM_ACCEL,
     .parent = TYPE_ACCEL,
     .instance_init = kvm_accel_instance_init,
+    .instance_finalize = kvm_accel_finalize,
     .class_init = kvm_accel_class_init,
     .instance_size = sizeof(KVMState),
 };

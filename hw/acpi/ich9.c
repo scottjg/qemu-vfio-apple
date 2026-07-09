@@ -388,9 +388,8 @@ static void ich9_pm_set_keep_pci_slot_hpc(Object *obj, bool value, Error **errp)
     s->pm.keep_pci_slot_hpc = value;
 }
 
-void ich9_pm_add_properties(Object *obj, ICH9LPCPMRegs *pm)
+void ich9_pm_reset_properties(ICH9LPCPMRegs *pm)
 {
-    static const uint32_t gpe0_len = ICH9_PMIO_GPE0_LEN;
     pm->acpi_memory_hotplug.is_enabled = true;
     pm->disable_s3 = 0;
     pm->disable_s4 = 0;
@@ -398,6 +397,11 @@ void ich9_pm_add_properties(Object *obj, ICH9LPCPMRegs *pm)
     pm->acpi_pci_hotplug.use_acpi_hotplug_bridge = true;
     pm->keep_pci_slot_hpc = true;
     pm->enable_tco = true;
+}
+
+void ich9_pm_add_properties(Object *obj, ICH9LPCPMRegs *pm)
+{
+    static const uint32_t gpe0_len = ICH9_PMIO_GPE0_LEN;
 
     object_property_add_uint32_ptr(obj, ACPI_PM_PROP_PM_IO_BASE,
                                    &pm->pm_io_base, OBJ_PROP_FLAG_READ);

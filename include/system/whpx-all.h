@@ -22,7 +22,4 @@ void whpx_translate_cpu_breakpoints(
 void whpx_arch_destroy_vcpu(CPUState *cpu);
 void whpx_arch_accel_class_init(ObjectClass *oc);
 
-/* called by whpx-accel-ops */
-bool whpx_arch_supports_guest_debug(void);
-
 #endif

@@ -147,7 +147,7 @@ bool rx_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
     return false;
 }
 
-hwaddr rx_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
+hwaddr rx_cpu_get_phys_addr_debug(CPUState *cs, vaddr addr)
 {
     return addr;
 }

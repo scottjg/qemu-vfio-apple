@@ -515,13 +515,8 @@ An iterative device must provide:
   - A ``load_setup`` function that initialises the data structures on the
     destination.
 
-  - A ``state_pending_exact`` function that indicates how much more
-    data we must save.  The core migration code will use this to
-    determine when to pause the CPUs and complete the migration.
-
-  - A ``state_pending_estimate`` function that indicates how much more
-    data we must save.  When the estimated amount is smaller than the
-    threshold, we call ``state_pending_exact``.
+  - A ``save_query_pending`` function that indicates how much more
+    data we must save.
 
   - A ``save_live_iterate`` function should send a chunk of data until
     the point that stream bandwidth limits tell it to stop.  Each call

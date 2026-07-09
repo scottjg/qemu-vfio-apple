@@ -24,82 +24,6 @@ static uint64_t intel_iommu_expected_gpa(uint64_t iova)
     return (QVTD_PT_VAL & VTD_PAGE_MASK_4K) + (iova & 0xfff);
 }
 
-static void save_fn(QPCIDevice *dev, int devfn, void *data)
-{
-    QPCIDevice **pdev = (QPCIDevice **) data;
-
-    *pdev = dev;
-}
-
-static QPCIDevice *setup_qtest_pci_device(QTestState *qts, QPCIBus **pcibus,
-                                          QPCIBar *bar)
-{
-    QPCIDevice *dev = NULL;
-
-    *pcibus = qpci_new_pc(qts, NULL);
-    g_assert(*pcibus != NULL);
-
-    qpci_device_foreach(*pcibus, IOMMU_TESTDEV_VENDOR_ID,
-                        IOMMU_TESTDEV_DEVICE_ID, save_fn, &dev);
-
-    g_assert(dev);
-    qpci_device_enable(dev);
-    *bar = qpci_iomap(dev, 0, NULL);
-    g_assert_false(bar->is_io);
-
-    return dev;
-}
-
-static const char *qvtd_iommu_args(QVTDTransMode mode)
-{
-    switch (mode) {
-    case QVTD_TM_SCALABLE_FLT:
-        return "-device intel-iommu,x-scalable-mode=on,x-flts=on ";
-    case QVTD_TM_SCALABLE_PT:
-    case QVTD_TM_SCALABLE_SLT:
-        return "-device intel-iommu,x-scalable-mode=on ";
-    default:
-        return "-device intel-iommu ";
-    }
-}
-
-static bool qvtd_check_caps(QTestState *qts, QVTDTransMode mode)
-{
-    uint64_t ecap = qtest_readq(qts,
-                                Q35_HOST_BRIDGE_IOMMU_ADDR + DMAR_ECAP_REG);
-
-    /* All scalable modes require SMTS */
-    if (qvtd_is_scalable(mode) && !(ecap & VTD_ECAP_SMTS)) {
-        g_test_skip("ECAP.SMTS not supported");
-        return false;
-    }
-
-    switch (mode) {
-    case QVTD_TM_SCALABLE_PT:
-        if (!(ecap & VTD_ECAP_PT)) {
-            g_test_skip("ECAP.PT not supported");
-            return false;
-        }
-        break;
-    case QVTD_TM_SCALABLE_SLT:
-        if (!(ecap & VTD_ECAP_SSTS)) {
-            g_test_skip("ECAP.SSTS not supported");
-            return false;
-        }
-        break;
-    case QVTD_TM_SCALABLE_FLT:
-        if (!(ecap & VTD_ECAP_FSTS)) {
-            g_test_skip("ECAP.FSTS not supported");
-            return false;
-        }
-        break;
-    default:
-        break;
-    }
-
-    return true;
-}
-
 static void run_intel_iommu_translation(const QVTDTestConfig *cfg)
 {
     QTestState *qts;
@@ -124,7 +48,7 @@ static void run_intel_iommu_translation(const QVTDTestConfig *cfg)
     }
 
     /* Setup and configure IOMMU-testdev PCI device */
-    dev = setup_qtest_pci_device(qts, &pcibus, &bar);
+    dev = qvtd_setup_qtest_pci_device(qts, &pcibus, &bar);
     g_assert(dev);
 
     g_test_message("### Intel IOMMU translation mode=%d ###", cfg->trans_mode);

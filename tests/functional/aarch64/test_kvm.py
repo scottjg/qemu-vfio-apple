@@ -14,6 +14,7 @@
 from qemu_test import Asset
 from qemu_test import exec_command_and_wait_for_pattern as ec_and_wait
 from qemu_test.linuxkernel import LinuxKernelTest
+from qemu.machine.machine import VMLaunchFailure
 
 
 class Aarch64VirtKVMTests(LinuxKernelTest):
@@ -38,13 +39,20 @@ class Aarch64VirtKVMTests(LinuxKernelTest):
         kernel_command_line = (self.KERNEL_COMMON_COMMAND_LINE +
                                f"console=ttyAMA0 kvm-arm.mode={kvm_mode}")
 
-        self.vm.add_args("-cpu", "cortex-a72")
+        self.vm.add_args("-cpu", "max")
         self.vm.add_args("-machine", "virt,gic-version=3,virtualization=on",
                          '-kernel', kernel_path,
                          '-append', kernel_command_line)
         self.vm.add_args("-smp", "2", "-m", "320")
 
-        self.vm.launch()
+        try:
+            self.vm.launch()
+        except VMLaunchFailure as excp:
+            if "does not support providing Virtualization" in excp.output:
+                self.skipTest("accelerator has no virtualization support")
+            else:
+                self.log.info("unhandled launch failure: %s", excp.output)
+                raise excp
 
         self.wait_for_console_pattern('buildroot login:')
         ec_and_wait(self, 'root', '#')

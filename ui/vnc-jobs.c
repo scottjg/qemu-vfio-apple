@@ -29,8 +29,6 @@
 #include "qemu/osdep.h"
 #include "vnc.h"
 #include "vnc-jobs.h"
-#include "qemu/sockets.h"
-#include "qemu/main-loop.h"
 #include "trace.h"
 
 /*
@@ -56,16 +54,9 @@ struct VncJobQueue {
     QemuCond cond;
     QemuMutex mutex;
     QemuThread thread;
+    bool exit;
     QTAILQ_HEAD(, VncJob) jobs;
 };
-
-typedef struct VncJobQueue VncJobQueue;
-
-/*
- * We use a single global queue, but most of the functions are
- * already reentrant, so we can easily add more than one encoding thread
- */
-static VncJobQueue *queue;
 
 static void vnc_lock_queue(VncJobQueue *queue)
 {
@@ -125,12 +116,15 @@ static void vnc_job_free(VncJob *job)
  */
 void vnc_job_push(VncJob *job)
 {
+    VncJobQueue *queue = job->vs->vd->queue;
+
     assert(!QTAILQ_IN_USE(job, next));
 
     if (QLIST_EMPTY(&job->rectangles)) {
         vnc_job_free(job);
     } else {
         vnc_lock_queue(queue);
+        assert(!queue->exit);
         QTAILQ_INSERT_TAIL(&queue->jobs, job, next);
         qemu_cond_broadcast(&queue->cond);
         vnc_unlock_queue(queue);
@@ -139,6 +133,7 @@ void vnc_job_push(VncJob *job)
 
 static bool vnc_has_job_locked(VncState *vs)
 {
+    VncJobQueue *queue = vs->vd->queue;
     VncJob *job;
 
     QTAILQ_FOREACH(job, &queue->jobs, next) {
@@ -151,6 +146,8 @@ static bool vnc_has_job_locked(VncState *vs)
 
 void vnc_jobs_join(VncState *vs)
 {
+    VncJobQueue *queue = vs->vd->queue;
+
     vnc_lock_queue(queue);
     while (vnc_has_job_locked(vs)) {
         qemu_cond_wait(&queue->cond, &queue->mutex);
@@ -252,8 +249,12 @@ static int vnc_worker_thread_loop(VncJobQueue *queue)
     int saved_offset;
 
     vnc_lock_queue(queue);
-    while (QTAILQ_EMPTY(&queue->jobs)) {
+    while (QTAILQ_EMPTY(&queue->jobs) && !queue->exit) {
         qemu_cond_wait(&queue->cond, &queue->mutex);
+    }
+    if (queue->exit) {
+        vnc_unlock_queue(queue);
+        return 1;
     }
     job = QTAILQ_FIRST(&queue->jobs);
     vnc_unlock_queue(queue);
@@ -340,7 +341,7 @@ disconnected:
     return 0;
 }
 
-static VncJobQueue *vnc_queue_init(void)
+static VncJobQueue *vnc_queue_new(void)
 {
     VncJobQueue *queue = g_new0(VncJobQueue, 1);
 
@@ -350,29 +351,46 @@ static VncJobQueue *vnc_queue_init(void)
     return queue;
 }
 
+static void vnc_queue_free(VncJobQueue *queue)
+{
+    qemu_cond_destroy(&queue->cond);
+    qemu_mutex_destroy(&queue->mutex);
+    g_free(queue);
+}
+
 static void *vnc_worker_thread(void *arg)
 {
     VncJobQueue *queue = arg;
 
     while (!vnc_worker_thread_loop(queue)) ;
-    g_assert_not_reached();
+
     return NULL;
 }
 
-static bool vnc_worker_thread_running(void)
+void vnc_start_worker_thread(VncDisplay *vd)
 {
-    return queue; /* Check global queue */
+    assert(vd->queue == NULL);
+
+    vd->queue = vnc_queue_new();
+    qemu_thread_create(&vd->queue->thread, "vnc_worker", vnc_worker_thread, vd->queue,
+                       QEMU_THREAD_JOINABLE);
 }
 
-void vnc_start_worker_thread(void)
+void vnc_stop_worker_thread(VncDisplay *vd)
 {
-    VncJobQueue *q;
+    VncJobQueue *queue = vd->queue;
 
-    if (vnc_worker_thread_running())
+    if (!queue) {
         return;
+    }
 
-    q = vnc_queue_init();
-    qemu_thread_create(&q->thread, "vnc_worker", vnc_worker_thread, q,
-                       QEMU_THREAD_DETACHED);
-    queue = q; /* Set global queue */
+    /* all VNC clients must have finished before we can stop the worker thread */
+    vnc_lock_queue(queue);
+    assert(QTAILQ_EMPTY(&queue->jobs));
+    queue->exit = true;
+    qemu_cond_broadcast(&queue->cond);
+    vnc_unlock_queue(queue);
+
+    qemu_thread_join(&queue->thread);
+    g_clear_pointer(&vd->queue, vnc_queue_free);
 }

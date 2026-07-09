@@ -175,7 +175,7 @@ static void gd_clipboard_owner_change_targets_received_callback(
 {
     QemuClipboardInfo *info = (QemuClipboardInfo *)data;
 
-    if (n_targets) {
+    if (targets && n_targets > 0) {
         if (gtk_targets_include_text(targets, n_targets)) {
             info->types[QEMU_CLIPBOARD_TYPE_TEXT].available = true;
         }
@@ -234,4 +234,19 @@ void gd_clipboard_init(GtkDisplayState *gd)
                      "owner-change", G_CALLBACK(gd_owner_change), gd);
     g_signal_connect(gd->gtkcb[QEMU_CLIPBOARD_SELECTION_SECONDARY],
                      "owner-change", G_CALLBACK(gd_owner_change), gd);
+}
+
+void gd_clipboard_cleanup(GtkDisplayState *gd)
+{
+    if (!gd->cbpeer.name) {
+        return;
+    }
+    qemu_clipboard_peer_unregister(&gd->cbpeer);
+    g_signal_handlers_disconnect_by_data(
+        gd->gtkcb[QEMU_CLIPBOARD_SELECTION_CLIPBOARD], gd);
+    g_signal_handlers_disconnect_by_data(
+        gd->gtkcb[QEMU_CLIPBOARD_SELECTION_PRIMARY], gd);
+    g_signal_handlers_disconnect_by_data(
+        gd->gtkcb[QEMU_CLIPBOARD_SELECTION_SECONDARY], gd);
+    gd->cbpeer.name = NULL;
 }

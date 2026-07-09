@@ -4,6 +4,7 @@ tests_generic_system = [
   'empty_cpu_model',
   'info_usernet',
   'linters',
+  'monitor_hotplug',
   'version',
   'vnc',
 ]

@@ -22,7 +22,6 @@
 
 #include "cpu-qom.h"
 #include "exec/cpu-common.h"
-#include "exec/cpu-defs.h"
 #include "qemu/cpu-float.h"
 #include "exec/cpu-interrupt.h"
 
@@ -370,8 +369,8 @@ struct MicroBlazeCPUClass {
 #ifndef CONFIG_USER_ONLY
 void mb_cpu_do_interrupt(CPUState *cs);
 bool mb_cpu_exec_interrupt(CPUState *cs, int int_req);
-hwaddr mb_cpu_get_phys_page_attrs_debug(CPUState *cpu, vaddr addr,
-                                        MemTxAttrs *attrs);
+bool mb_cpu_translate_for_debug(CPUState *cs, vaddr addr,
+                                TranslateForDebugResult *result);
 #endif /* !CONFIG_USER_ONLY */
 G_NORETURN void mb_cpu_do_unaligned_access(CPUState *cs, vaddr vaddr,
                                            MMUAccessType access_type,
@@ -412,13 +411,6 @@ void mb_translate_code(CPUState *cs, TranslationBlock *tb,
 
 /* Ensure there is no overlap between the two masks. */
 QEMU_BUILD_BUG_ON(MSR_TB_MASK & IFLAGS_TB_MASK);
-
-static inline bool mb_cpu_is_big_endian(CPUState *cs)
-{
-    MicroBlazeCPU *cpu = MICROBLAZE_CPU(cs);
-
-    return !cpu->cfg.endi;
-}
 
 #if !defined(CONFIG_USER_ONLY)
 bool mb_cpu_tlb_fill(CPUState *cs, vaddr address, int size,

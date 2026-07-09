@@ -268,7 +268,7 @@ static bool ssd0303_update_display(void *opaque)
         }
     }
     s->redraw = 0;
-    dpy_gfx_update(s->con, 0, 0, 96 * MAGNIFY, 16 * MAGNIFY);
+    qemu_console_update(s->con, 0, 0, 96 * MAGNIFY, 16 * MAGNIFY);
 
     return true;
 }
@@ -309,7 +309,7 @@ static void ssd0303_realize(DeviceState *dev, Error **errp)
 {
     ssd0303_state *s = SSD0303(dev);
 
-    s->con = graphic_console_init(dev, 0, &ssd0303_ops, s);
+    s->con = qemu_graphic_console_create(dev, 0, &ssd0303_ops, s);
     qemu_console_resize(s->con, 96 * MAGNIFY, 16 * MAGNIFY);
 }
 

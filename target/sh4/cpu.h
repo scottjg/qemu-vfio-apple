@@ -22,7 +22,6 @@
 
 #include "cpu-qom.h"
 #include "exec/cpu-common.h"
-#include "exec/cpu-defs.h"
 #include "exec/cpu-interrupt.h"
 #include "qemu/cpu-float.h"
 
@@ -252,7 +251,7 @@ void sh4_translate_code(CPUState *cs, TranslationBlock *tb,
                         int *max_insns, vaddr pc, void *host_pc);
 
 #if !defined(CONFIG_USER_ONLY)
-hwaddr superh_cpu_get_phys_page_debug(CPUState *cpu, vaddr addr);
+hwaddr superh_cpu_get_phys_addr_debug(CPUState *cpu, vaddr addr);
 bool superh_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
                          MMUAccessType access_type, int mmu_idx,
                          bool probe, uintptr_t retaddr);
@@ -379,5 +378,8 @@ static inline void cpu_write_sr(CPUSH4State *env, uint32_t sr)
     env->sr_t = (sr >> SR_T) & 1;
     env->sr = sr & ~((1u << SR_M) | (1u << SR_Q) | (1u << SR_T));
 }
+
+/* Set FPSCR and the derived float_status rounding/flush-to-zero state. */
+void cpu_load_fpscr(CPUSH4State *env, uint32_t val);
 
 #endif /* SH4_CPU_H */

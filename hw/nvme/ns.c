@@ -20,6 +20,7 @@
 #include "qemu/bitops.h"
 #include "system/system.h"
 #include "system/block-backend.h"
+#include "migration/vmstate.h"
 
 #include "nvme.h"
 #include "trace.h"
@@ -719,10 +720,17 @@ void nvme_ns_cleanup(NvmeNamespace *ns)
 static void nvme_ns_unrealize(DeviceState *dev)
 {
     NvmeNamespace *ns = NVME_NS(dev);
+    NvmeSubsystem *subsys = ns->subsys;
+    uint32_t nsid = ns->params.nsid;
 
     nvme_ns_drain(ns);
     nvme_ns_shutdown(ns);
     nvme_ns_cleanup(ns);
+
+    /* Symmetric with nvme_ns_realize() which sets subsys->namespaces[nsid]. */
+    if (subsys && nsid && subsys->namespaces[nsid] == ns) {
+        subsys->namespaces[nsid] = NULL;
+    }
 }
 
 void nvme_ns_atomic_configure_boundary(bool dn, uint16_t nabsn,
@@ -886,6 +894,168 @@ static void nvme_ns_realize(DeviceState *dev, Error **errp)
     }
 }
 
+static const VMStateDescription nvme_vmstate_lbaf = {
+    .name = "nvme_lbaf",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (const VMStateField[]) {
+        VMSTATE_UINT16(ms, NvmeLBAF),
+        VMSTATE_UINT8(ds, NvmeLBAF),
+        VMSTATE_UINT8(rp, NvmeLBAF),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static const VMStateDescription nvme_vmstate_id_ns = {
+    .name = "nvme_id_ns",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (const VMStateField[]) {
+        VMSTATE_UINT64(nsze, NvmeIdNs),
+        VMSTATE_UINT64(ncap, NvmeIdNs),
+        VMSTATE_UINT64(nuse, NvmeIdNs),
+        VMSTATE_UINT8(nsfeat, NvmeIdNs),
+        VMSTATE_UINT8(nlbaf, NvmeIdNs),
+        VMSTATE_UINT8(flbas, NvmeIdNs),
+        VMSTATE_UINT8(mc, NvmeIdNs),
+        VMSTATE_UINT8(dpc, NvmeIdNs),
+        VMSTATE_UINT8(dps, NvmeIdNs),
+        VMSTATE_UINT8(nmic, NvmeIdNs),
+        VMSTATE_UINT8(rescap, NvmeIdNs),
+        VMSTATE_UINT8(fpi, NvmeIdNs),
+        VMSTATE_UINT8(dlfeat, NvmeIdNs),
+        VMSTATE_UINT16(nawun, NvmeIdNs),
+        VMSTATE_UINT16(nawupf, NvmeIdNs),
+        VMSTATE_UINT16(nacwu, NvmeIdNs),
+        VMSTATE_UINT16(nabsn, NvmeIdNs),
+        VMSTATE_UINT16(nabo, NvmeIdNs),
+        VMSTATE_UINT16(nabspf, NvmeIdNs),
+        VMSTATE_UINT16(noiob, NvmeIdNs),
+        VMSTATE_UINT8_ARRAY(nvmcap, NvmeIdNs, 16),
+        VMSTATE_UINT16(npwg, NvmeIdNs),
+        VMSTATE_UINT16(npwa, NvmeIdNs),
+        VMSTATE_UINT16(npdg, NvmeIdNs),
+        VMSTATE_UINT16(npda, NvmeIdNs),
+        VMSTATE_UINT16(nows, NvmeIdNs),
+        VMSTATE_UINT16(mssrl, NvmeIdNs),
+        VMSTATE_UINT32(mcl, NvmeIdNs),
+        VMSTATE_UINT8(msrc, NvmeIdNs),
+        VMSTATE_UINT8_ARRAY(rsvd81, NvmeIdNs, 18),
+        VMSTATE_UINT8(nsattr, NvmeIdNs),
+        VMSTATE_UINT16(nvmsetid, NvmeIdNs),
+        VMSTATE_UINT16(endgid, NvmeIdNs),
+        VMSTATE_UINT8_ARRAY(nguid, NvmeIdNs, 16),
+        VMSTATE_UINT64(eui64, NvmeIdNs),
+        VMSTATE_STRUCT_ARRAY(lbaf, NvmeIdNs, NVME_MAX_NLBAF, 1,
+                             nvme_vmstate_lbaf, NvmeLBAF),
+        VMSTATE_UINT8_ARRAY(vs, NvmeIdNs, 3712),
+
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static const VMStateDescription nvme_vmstate_id_ns_nvm = {
+    .name = "nvme_id_ns_nvm",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (const VMStateField[]) {
+        VMSTATE_UINT64(lbstm, NvmeIdNsNvm),
+        VMSTATE_UINT8(pic, NvmeIdNsNvm),
+        VMSTATE_UINT8_ARRAY(rsvd9, NvmeIdNsNvm, 3),
+        VMSTATE_UINT32_ARRAY(elbaf, NvmeIdNsNvm, NVME_MAX_NLBAF),
+        VMSTATE_UINT32(npdgl, NvmeIdNsNvm),
+        VMSTATE_UINT32(nprg, NvmeIdNsNvm),
+        VMSTATE_UINT32(npra, NvmeIdNsNvm),
+        VMSTATE_UINT32(nors, NvmeIdNsNvm),
+        VMSTATE_UINT32(npdal, NvmeIdNsNvm),
+        VMSTATE_UINT8_ARRAY(rsvd288, NvmeIdNsNvm, 3808),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static const VMStateDescription nvme_vmstate_id_ns_ind = {
+    .name = "nvme_id_ns_ind",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (const VMStateField[]) {
+        VMSTATE_UINT8(nsfeat, NvmeIdNsInd),
+        VMSTATE_UINT8(nmic, NvmeIdNsInd),
+        VMSTATE_UINT8(rescap, NvmeIdNsInd),
+        VMSTATE_UINT8(fpi, NvmeIdNsInd),
+        VMSTATE_UINT32(anagrpid, NvmeIdNsInd),
+        VMSTATE_UINT8(nsattr, NvmeIdNsInd),
+        VMSTATE_UINT8(rsvd9, NvmeIdNsInd),
+        VMSTATE_UINT16(nvmsetid, NvmeIdNsInd),
+        VMSTATE_UINT16(endgrpid, NvmeIdNsInd),
+        VMSTATE_UINT8(nstat, NvmeIdNsInd),
+        VMSTATE_UINT8_ARRAY(rsvd15, NvmeIdNsInd, 4081),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+typedef struct TmpNvmeNamespace {
+    NvmeNamespace *parent;
+    bool enable_write_cache;
+} TmpNvmeNamespace;
+
+static bool nvme_ns_tmp_pre_save(void *opaque, Error **errp)
+{
+    struct TmpNvmeNamespace *tns = opaque;
+
+    tns->enable_write_cache = blk_enable_write_cache(tns->parent->blkconf.blk);
+
+    return true;
+}
+
+static bool nvme_ns_tmp_post_load(void *opaque, int version_id, Error **errp)
+{
+    struct TmpNvmeNamespace *tns = opaque;
+
+    blk_set_enable_write_cache(tns->parent->blkconf.blk,
+                               tns->enable_write_cache);
+
+    return true;
+}
+
+static const VMStateDescription nvme_vmstate_ns_tmp = {
+    .name = "nvme_ns_tmp",
+    .pre_save_errp = nvme_ns_tmp_pre_save,
+    .post_load_errp = nvme_ns_tmp_post_load,
+    .fields = (const VMStateField[]) {
+        VMSTATE_BOOL(enable_write_cache, TmpNvmeNamespace),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+const VMStateDescription nvme_vmstate_ns = {
+    .name = "nvme_ns",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (const VMStateField[]) {
+        VMSTATE_WITH_TMP(NvmeNamespace, TmpNvmeNamespace, nvme_vmstate_ns_tmp),
+
+        VMSTATE_STRUCT(id_ns, NvmeNamespace, 0, nvme_vmstate_id_ns, NvmeIdNs),
+        VMSTATE_STRUCT(id_ns_nvm, NvmeNamespace, 0,
+                       nvme_vmstate_id_ns_nvm, NvmeIdNsNvm),
+        VMSTATE_STRUCT(id_ns_ind, NvmeNamespace, 0,
+                       nvme_vmstate_id_ns_ind, NvmeIdNsInd),
+        VMSTATE_STRUCT(lbaf, NvmeNamespace, 0, nvme_vmstate_lbaf, NvmeLBAF),
+        VMSTATE_UINT32(nlbaf, NvmeNamespace),
+        VMSTATE_UINT8(csi, NvmeNamespace),
+        VMSTATE_UINT16(status, NvmeNamespace),
+        VMSTATE_UINT8(pif, NvmeNamespace),
+
+        VMSTATE_UINT16(zns.zrwas, NvmeNamespace),
+        VMSTATE_UINT16(zns.zrwafg, NvmeNamespace),
+        VMSTATE_UINT32(zns.numzrwa, NvmeNamespace),
+
+        VMSTATE_UINT32(features.err_rec, NvmeNamespace),
+        VMSTATE_STRUCT(atomic, NvmeNamespace, 0,
+                       nvme_vmstate_atomic, NvmeAtomic),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
 static const Property nvme_ns_props[] = {
     DEFINE_BLOCK_PROPERTIES(NvmeNamespace, blkconf),
     DEFINE_PROP_BOOL("detached", NvmeNamespace, params.detached, false),
@@ -937,6 +1107,8 @@ static void nvme_ns_class_init(ObjectClass *oc, const void *data)
     dc->bus_type = TYPE_NVME_BUS;
     dc->realize = nvme_ns_realize;
     dc->unrealize = nvme_ns_unrealize;
+    dc->hotpluggable = true;
+    dc->vmsd = &nvme_vmstate_ns;
     device_class_set_props(dc, nvme_ns_props);
     dc->desc = "Virtual NVMe namespace";
 }

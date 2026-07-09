@@ -87,7 +87,7 @@ void cpu_loop(CPUS390XState *env)
                 env->regs[2] = ret;
             }
 
-            if (unlikely(cs->singlestep_enabled)) {
+            if (unlikely(cpu_single_stepping(cs))) {
                 /*
                  * cpu_tb_exec() did not raise EXCP_DEBUG, because it has seen
                  * that EXCP_SVC was already pending.

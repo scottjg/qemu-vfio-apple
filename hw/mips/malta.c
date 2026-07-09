@@ -55,7 +55,6 @@
 #include "system/system.h"
 #include "qapi/error.h"
 #include "qemu/error-report.h"
-#include "system/kvm.h"
 #include "semihosting/semihost.h"
 #include "hw/mips/cps.h"
 #include "hw/core/qdev-clock.h"
@@ -968,10 +967,10 @@ static void malta_mips_config(MIPSCPU *cpu)
     CPUState *cs = CPU(cpu);
 
     if (ase_mt_available(env)) {
-        env->mvp->CP0_MVPConf0 = deposit32(env->mvp->CP0_MVPConf0,
+        cpu->mvp->CP0_MVPConf0 = deposit32(cpu->mvp->CP0_MVPConf0,
                                            CP0MVPC0_PTC, 8,
                                            smp_cpus * cs->nr_threads - 1);
-        env->mvp->CP0_MVPConf0 = deposit32(env->mvp->CP0_MVPConf0,
+        cpu->mvp->CP0_MVPConf0 = deposit32(cpu->mvp->CP0_MVPConf0,
                                            CP0MVPC0_PVPE, 4, smp_cpus - 1);
     }
 }

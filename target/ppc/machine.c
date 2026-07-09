@@ -5,6 +5,7 @@
 #include "helper_regs.h"
 #include "mmu-hash64.h"
 #include "migration/cpu.h"
+#include "migration/qemu-file-types.h"
 #include "qapi/error.h"
 #include "kvm_ppc.h"
 #include "power8-pmu.h"

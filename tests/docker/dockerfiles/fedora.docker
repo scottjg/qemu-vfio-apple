@@ -50,7 +50,6 @@ exec "$@"\n' > /usr/bin/nosync && \
                        glib2-static \
                        glibc-langpack-en \
                        glibc-static \
-                       glusterfs-api-devel \
                        gnutls-devel \
                        gtk-vnc2-devel \
                        gtk3-devel \
@@ -163,4 +162,4 @@ ARG UID
 RUN if [ "${USER}" ]; then \
   id ${USER} 2>/dev/null || useradd -u ${UID} -U ${USER}; fi
 
-ENV ENABLE_RUST 1
+ENV ENABLE_RUST=1

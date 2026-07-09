@@ -40,6 +40,7 @@
 #include "qemu/cutils.h"
 #include "disas/capstone.h"
 #include "fpu/softfloat.h"
+#include "exec/page-protection.h"
 #include "exec/watchpoint.h"
 #include "helper_regs.h"
 #include "internal.h"
@@ -6310,12 +6311,6 @@ static bool ppc_pvr_match_power8(PowerPCCPUClass *pcc, uint32_t pvr, bool best)
         if (base == CPU_POWERPC_POWER8_BASE) {
             return true;
         }
-        if (base == CPU_POWERPC_POWER8E_BASE) {
-            return true;
-        }
-        if (base == CPU_POWERPC_POWER8NVL_BASE) {
-            return true;
-        }
     }
     if (base != pcc_base) {
         return false;
@@ -7477,7 +7472,7 @@ static void ppc_disas_set_info(const CPUState *cs, disassemble_info *info)
 
 static const struct SysemuCPUOps ppc_sysemu_ops = {
     .has_work = ppc_cpu_has_work,
-    .get_phys_page_debug = ppc_cpu_get_phys_page_debug,
+    .get_phys_addr_debug = ppc_cpu_get_phys_addr_debug,
     .write_elf32_note = ppc32_cpu_write_elf32_note,
     .write_elf64_note = ppc64_cpu_write_elf64_note,
     .internal_is_big_endian = ppc_cpu_is_big_endian,
@@ -7619,8 +7614,9 @@ void ppc_cpu_dump_state(CPUState *cs, FILE *f, int flags)
 #if !defined(CONFIG_USER_ONLY)
     if (env->tb_env) {
         qemu_fprintf(f, "TB %08" PRIu32 " %08" PRIu64
-                     " DECR " TARGET_FMT_lu "\n", cpu_ppc_load_tbu(env),
-                     cpu_ppc_load_tbl(env), cpu_ppc_load_decr(env));
+                     " DECR " TARGET_FMT_lu " TB_OFFSET %016" PRId64 "\n",
+                     cpu_ppc_load_tbu(env), cpu_ppc_load_tbl(env),
+                     cpu_ppc_load_decr(env), cpu_ppc_load_tb_offset(env));
     }
 #else
     qemu_fprintf(f, "TB %08" PRIu32 " %08" PRIu64 "\n", cpu_ppc_load_tbu(env),

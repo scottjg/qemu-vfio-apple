@@ -12,7 +12,7 @@
 { 'include': 'sockets.json' }
 
 ##
-# @MigrationStats:
+# @MigrationRAMStats:
 #
 # Detailed migration status.
 #
@@ -64,7 +64,7 @@
 #
 # Since: 0.14
 ##
-{ 'struct': 'MigrationStats',
+{ 'struct': 'MigrationRAMStats',
   'data': {'transferred': 'int', 'remaining': 'int', 'total': 'int' ,
            'duplicate': 'int',
            'normal': 'int',
@@ -209,8 +209,8 @@
 #     If this field is not returned, no migration process has been
 #     initiated
 #
-# @ram: `MigrationStats` containing detailed migration status, only
-#     returned if status is 'active' or 'completed'(since 1.2)
+# @ram: Detailed migration RAM statistics, only returned if migration
+#     is in progress or completed (since 1.2)
 #
 # @xbzrle-cache: `XBZRLECacheStats` containing detailed XBZRLE
 #     migration statistics, only returned if XBZRLE feature is on and
@@ -300,6 +300,9 @@
 #     average memory load of the virtual CPU indirectly.  Note that
 #     zero means guest doesn't dirty memory.  (Since 8.1)
 #
+# @remaining: amount of bytes remaining to be migrated system-wide,
+#     includes both RAM and all devices (like VFIO).  (Since 11.1)
+#
 # Features:
 #
 # @unstable: Members @postcopy-latency, @postcopy-vcpu-latency,
@@ -309,7 +312,8 @@
 # Since: 0.14
 ##
 { 'struct': 'MigrationInfo',
-  'data': {'*status': 'MigrationStatus', '*ram': 'MigrationStats',
+  'data': {'*status': 'MigrationStatus', '*ram': 'MigrationRAMStats',
+           '*remaining': 'size',
            '*vfio': 'VfioStats',
            '*xbzrle-cache': 'XBZRLECacheStats',
            '*total-time': 'int',
@@ -504,14 +508,12 @@
 #     (since 7.1)
 #
 # @switchover-ack: If enabled, migration will not stop the source VM
-#     and complete the migration until an ACK is received from the
-#     destination that it's OK to do so.  Exactly when this ACK is
-#     sent depends on the migrated devices that use this feature.  For
-#     example, a device can use it to make sure some of its data is
-#     sent and loaded in the destination before doing switchover.
-#     This can reduce downtime if devices that support this capability
-#     are present.  'return-path' capability must be enabled to use
-#     it.  (since 8.1)
+#     and complete the migration until the destination has
+#     acknowledged that it is OK to switch over.  The acknowledgement
+#     may depend, for example, on some device's data being loaded in
+#     the destination before doing switchover.  This can reduce
+#     downtime if devices that support this capability are present.
+#     Capability @return-path must be enabled to use it.  (since 8.1)
 #
 # @dirty-limit: If enabled, migration will throttle vCPUs as needed to
 #     keep their dirty page rate within @vcpu-dirty-limit.  This can
@@ -800,13 +802,9 @@
 # Migration parameters enumeration.  The enumeration values mirror the
 # members of @MigrationParameters.
 #
-# @cpr-exec-command: Command to start the new QEMU process when @mode
-#     is @cpr-exec.  The first list element is the program's filename,
-#     the remainder its arguments.  (Since 10.2)
-#
 # Features:
 #
-# @unstable: Members @x-checkpoint-delay and
+# @unstable: Members @x-checkpoint-delay, @x-rdma-chunk-size, and
 #     @x-vcpu-dirty-limit-period are experimental.
 #
 # Since: 2.4
@@ -831,6 +829,7 @@
            'mode',
            'zero-page-detection',
            'direct-io',
+           { 'name': 'x-rdma-chunk-size', 'features': [ 'unstable' ] },
            'cpr-exec-command'] }
 
 ##
@@ -917,15 +916,15 @@
 #     (Since 2.8)
 #
 # @avail-switchover-bandwidth: to set the available bandwidth that
-#     migration can use during switchover phase.  **Note:** this does
-#     not limit the bandwidth during switchover, but only for
-#     calculations when making decisions to switchover.  By default,
-#     this value is zero, which means QEMU will estimate the bandwidth
-#     automatically.  This can be set when the estimated value is not
-#     accurate, while the user is able to guarantee such bandwidth is
-#     available when switching over.  When specified correctly, this
-#     can make the switchover decision much more accurate.
-#     (Since 8.2)
+#     migration can use during switchover phase, in bytes per
+#     second.  **Note:** this does not limit the bandwidth during
+#     switchover, but only for calculations when making decisions to
+#     switch over.  By default, this value is zero, which means QEMU
+#     will estimate the bandwidth automatically.  This can be set
+#     when the estimated value is not accurate, while the user is
+#     able to guarantee such bandwidth is available when switching
+#     over.  When specified correctly, this can make the switchover
+#     decision much more accurate.  (Since 8.2)
 #
 # @downtime-limit: set maximum tolerated downtime for migration.
 #     maximum downtime in milliseconds (Since 2.8)
@@ -1007,9 +1006,15 @@
 #     is @cpr-exec.  The first list element is the program's filename,
 #     the remainder its arguments.  (Since 10.2)
 #
+# @x-rdma-chunk-size: RDMA memory registration chunk size in bytes.
+#     Default is 1MiB.  Must be a power of 2 in the range
+#     [1MiB, 1024MiB].  Only applies when migrating via RDMA.
+#     Must be set to the same value on both source and destination
+#     before migration starts.  (Since 11.1)
+#
 # Features:
 #
-# @unstable: Members @x-checkpoint-delay and
+# @unstable: Members @x-checkpoint-delay, @x-rdma-chunk-size, and
 #     @x-vcpu-dirty-limit-period are experimental.
 #
 # Since: 2.4
@@ -1046,6 +1051,8 @@
             '*mode': 'MigMode',
             '*zero-page-detection': 'ZeroPageDetection',
             '*direct-io': 'bool',
+            '*x-rdma-chunk-size': { 'type': 'uint64',
+                                    'features': [ 'unstable' ] },
             '*cpr-exec-command': [ 'str' ]} }
 
 ##

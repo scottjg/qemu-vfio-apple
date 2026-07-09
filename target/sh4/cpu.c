@@ -151,7 +151,7 @@ static void superh_cpu_reset_hold(Object *obj, ResetType type)
     set_flush_to_zero(1, &env->fp_status);
 #endif
     set_default_nan_mode(1, &env->fp_status);
-    set_snan_bit_is_one(true, &env->fp_status);
+    set_snan_rule(float_snan_bit_is_one, &env->fp_status);
     /* sign bit clear, set all frac bits other than msb */
     set_float_default_nan_pattern(0b00111111, &env->fp_status);
     /*
@@ -278,7 +278,7 @@ static const VMStateDescription vmstate_sh_cpu = {
 
 static const struct SysemuCPUOps sh4_sysemu_ops = {
     .has_work = superh_cpu_has_work,
-    .get_phys_page_debug = superh_cpu_get_phys_page_debug,
+    .get_phys_addr_debug = superh_cpu_get_phys_addr_debug,
 };
 #endif
 

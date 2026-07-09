@@ -243,8 +243,7 @@ static bool tcx_update_display(void *opaque)
         } else {
             if (y_start >= 0) {
                 /* flush to display */
-                dpy_gfx_update(ts->con, 0, y_start,
-                               ts->width, y - y_start);
+                qemu_console_update(ts->con, 0, y_start, ts->width, y - y_start);
                 y_start = -1;
             }
         }
@@ -253,8 +252,7 @@ static bool tcx_update_display(void *opaque)
     }
     if (y_start >= 0) {
         /* flush to display */
-        dpy_gfx_update(ts->con, 0, y_start,
-                       ts->width, y - y_start);
+        qemu_console_update(ts->con, 0, y_start, ts->width, y - y_start);
     }
     g_free(snap);
     return true;
@@ -297,8 +295,7 @@ static bool tcx24_update_display(void *opaque)
         } else {
             if (y_start >= 0) {
                 /* flush to display */
-                dpy_gfx_update(ts->con, 0, y_start,
-                               ts->width, y - y_start);
+                qemu_console_update(ts->con, 0, y_start, ts->width, y - y_start);
                 y_start = -1;
             }
         }
@@ -309,8 +306,7 @@ static bool tcx24_update_display(void *opaque)
     }
     if (y_start >= 0) {
         /* flush to display */
-        dpy_gfx_update(ts->con, 0, y_start,
-                       ts->width, y - y_start);
+        qemu_console_update(ts->con, 0, y_start, ts->width, y - y_start);
     }
     g_free(snap);
     return true;
@@ -864,9 +860,9 @@ static void tcx_realize(DeviceState *dev, Error **errp)
     sysbus_init_irq(sbd, &s->irq);
 
     if (s->depth == 8) {
-        s->con = graphic_console_init(dev, 0, &tcx_ops, s);
+        s->con = qemu_graphic_console_create(dev, 0, &tcx_ops, s);
     } else {
-        s->con = graphic_console_init(dev, 0, &tcx24_ops, s);
+        s->con = qemu_graphic_console_create(dev, 0, &tcx24_ops, s);
     }
     s->thcmisc = 0;
 

@@ -23,6 +23,7 @@
 #include "qemu/error-report.h"
 #include "cpu.h"
 #include "accel/tcg/cpu-ops.h"
+#include "accel/tcg/cpu-loop.h"
 #include "exec/cputlb.h"
 #include "exec/page-protection.h"
 #include "exec/target_page.h"
@@ -107,7 +108,7 @@ void avr_cpu_do_interrupt(CPUState *cs)
     qemu_plugin_vcpu_interrupt_cb(cs, ret);
 }
 
-hwaddr avr_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
+hwaddr avr_cpu_get_phys_addr_debug(CPUState *cs, vaddr addr)
 {
     return addr; /* I assume 1:1 address correspondence */
 }

@@ -64,7 +64,8 @@
  *
  * = Reporting and destroying errors =
  *
- * Report an error to the current monitor if we have one, else stderr:
+ * Report an error to the current HMP monitor if we have one, else
+ * stderr:
  *     error_report_err(err);
  * This frees the error object.
  *

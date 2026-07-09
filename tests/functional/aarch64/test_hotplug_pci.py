@@ -27,6 +27,7 @@ class HotplugPCI(LinuxKernelTest):
     def test_hotplug_pci(self):
 
         self.set_machine('virt')
+        self.require_accelerator('tcg')
 
         self.vm.add_args('-m', '512M',
                          '-cpu', 'cortex-a57',

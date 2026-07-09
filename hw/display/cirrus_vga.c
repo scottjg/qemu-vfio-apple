@@ -779,9 +779,9 @@ static int cirrus_do_copy(CirrusVGAState *s, int dst, int src, int w, int h)
                       s->cirrus_blt_width, s->cirrus_blt_height);
 
     if (notify) {
-        dpy_gfx_update(s->vga.con, dx, dy,
-                       s->cirrus_blt_width / depth,
-                       s->cirrus_blt_height);
+        qemu_console_update(s->vga.con, dx, dy,
+                            s->cirrus_blt_width / depth,
+                            s->cirrus_blt_height);
     }
 
     /* we don't have to notify the display that this portion has
@@ -2964,7 +2964,7 @@ static void pci_cirrus_vga_realize(PCIDevice *dev, Error **errp)
     }
     cirrus_init_common(s, OBJECT(dev), device_id, 1, pci_address_space(dev),
                        pci_address_space_io(dev));
-    s->vga.con = graphic_console_init(DEVICE(dev), 0, s->vga.hw_ops, &s->vga);
+    s->vga.con = qemu_graphic_console_create(DEVICE(dev), 0, s->vga.hw_ops, &s->vga);
 
     /* setup PCI */
     memory_region_init(&s->pci_bar, OBJECT(dev), "cirrus-pci-bar0", 0x2000000);

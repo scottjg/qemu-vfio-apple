@@ -31,6 +31,7 @@
 #include "system/kvm.h"
 #include "system/kvm_int.h"
 #include "cpu.h"
+#include "target/riscv/csr.h"
 #include "trace.h"
 #include "accel/accel-cpu-target.h"
 #include "hw/pci/pci.h"
@@ -293,6 +294,7 @@ static void kvm_cpu_csr_set_u64(RISCVCPU *cpu, KVMCPUConfig *csr_cfg,
 
 static KVMCPUConfig kvm_multi_ext_cfgs[] = {
     KVM_EXT_CFG("zicbom", ext_zicbom, KVM_RISCV_ISA_EXT_ZICBOM),
+    KVM_EXT_CFG("zicbop", ext_zicbop, KVM_RISCV_ISA_EXT_ZICBOP),
     KVM_EXT_CFG("zicboz", ext_zicboz, KVM_RISCV_ISA_EXT_ZICBOZ),
     KVM_EXT_CFG("ziccrse", ext_ziccrse, KVM_RISCV_ISA_EXT_ZICCRSE),
     KVM_EXT_CFG("zicntr", ext_zicntr, KVM_RISCV_ISA_EXT_ZICNTR),
@@ -308,6 +310,7 @@ static KVMCPUConfig kvm_multi_ext_cfgs[] = {
     KVM_EXT_CFG("zacas", ext_zacas, KVM_RISCV_ISA_EXT_ZACAS),
     KVM_EXT_CFG("zawrs", ext_zawrs, KVM_RISCV_ISA_EXT_ZAWRS),
     KVM_EXT_CFG("zfa", ext_zfa, KVM_RISCV_ISA_EXT_ZFA),
+    KVM_EXT_CFG("zfbfmin", ext_zfbfmin, KVM_RISCV_ISA_EXT_ZFBFMIN),
     KVM_EXT_CFG("zfh", ext_zfh, KVM_RISCV_ISA_EXT_ZFH),
     KVM_EXT_CFG("zfhmin", ext_zfhmin, KVM_RISCV_ISA_EXT_ZFHMIN),
     KVM_EXT_CFG("zba", ext_zba, KVM_RISCV_ISA_EXT_ZBA),
@@ -333,6 +336,8 @@ static KVMCPUConfig kvm_multi_ext_cfgs[] = {
     KVM_EXT_CFG("zvbc", ext_zvbc, KVM_RISCV_ISA_EXT_ZVBC),
     KVM_EXT_CFG("zvfh", ext_zvfh, KVM_RISCV_ISA_EXT_ZVFH),
     KVM_EXT_CFG("zvfhmin", ext_zvfhmin, KVM_RISCV_ISA_EXT_ZVFHMIN),
+    KVM_EXT_CFG("zvfbfmin", ext_zvfbfmin, KVM_RISCV_ISA_EXT_ZVFBFMIN),
+    KVM_EXT_CFG("zvfbfwma", ext_zvfbfwma, KVM_RISCV_ISA_EXT_ZVFBFWMA),
     KVM_EXT_CFG("zvkb", ext_zvkb, KVM_RISCV_ISA_EXT_ZVKB),
     KVM_EXT_CFG("zvkg", ext_zvkg, KVM_RISCV_ISA_EXT_ZVKG),
     KVM_EXT_CFG("zvkned", ext_zvkned, KVM_RISCV_ISA_EXT_ZVKNED),
@@ -439,6 +444,12 @@ static KVMCPUConfig kvm_cboz_blocksize = {
     .kvm_reg_id = KVM_REG_RISCV_CONFIG_REG(zicboz_block_size)
 };
 
+static KVMCPUConfig kvm_cbop_blocksize = {
+    .name = "cbop_blocksize",
+    .offset = CPU_CFG_OFFSET(cbop_blocksize),
+    .kvm_reg_id = KVM_REG_RISCV_CONFIG_REG(zicbop_block_size)
+};
+
 static KVMCPUConfig kvm_v_vlenb = {
     .name = "vlenb",
     .offset = CPU_CFG_OFFSET(vlenb),
@@ -525,20 +536,9 @@ static void riscv_cpu_add_kvm_unavail_prop(Object *obj, const char *prop_name)
                         NULL, (void *)prop_name);
 }
 
-static void riscv_cpu_add_kvm_unavail_prop_array(Object *obj,
-                                        const RISCVCPUMultiExtConfig *array)
-{
-    const RISCVCPUMultiExtConfig *prop;
-
-    g_assert(array);
-
-    for (prop = array; prop && prop->name; prop++) {
-        riscv_cpu_add_kvm_unavail_prop(obj, prop->name);
-    }
-}
-
 static void kvm_riscv_add_cpu_user_properties(Object *cpu_obj)
 {
+    const RISCVIsaExtData *edata;
     int i;
 
     riscv_add_satp_mode_properties(cpu_obj);
@@ -572,9 +572,15 @@ static void kvm_riscv_add_cpu_user_properties(Object *cpu_obj)
                             NULL, multi_cfg);
     }
 
-    riscv_cpu_add_kvm_unavail_prop_array(cpu_obj, riscv_cpu_extensions);
-    riscv_cpu_add_kvm_unavail_prop_array(cpu_obj, riscv_cpu_vendor_exts);
-    riscv_cpu_add_kvm_unavail_prop_array(cpu_obj, riscv_cpu_experimental_exts);
+    /*
+     * Mark all isa_edata_arr properties that collides with
+     * a KVM property as unavailable.
+     */
+    for (edata = isa_edata_arr; edata && edata->name; edata++) {
+        if (edata->prop_name) {
+            riscv_cpu_add_kvm_unavail_prop(cpu_obj, edata->prop_name);
+        }
+    }
 
    /* We don't have the needed KVM support for profiles */
     for (i = 0; riscv_profiles[i] != NULL; i++) {
@@ -1293,6 +1299,10 @@ static void kvm_riscv_init_cfg(RISCVCPU *cpu, KVMScratchCPU *kvmcpu)
         kvm_riscv_read_cbomz_blksize(cpu, kvmcpu, &kvm_cbom_blocksize);
     }
 
+    if (cpu->cfg.ext_zicbop) {
+        kvm_riscv_read_cbomz_blksize(cpu, kvmcpu, &kvm_cbop_blocksize);
+    }
+
     if (cpu->cfg.ext_zicboz) {
         kvm_riscv_read_cbomz_blksize(cpu, kvmcpu, &kvm_cboz_blocksize);
     }
@@ -1385,6 +1395,17 @@ int kvm_arch_put_registers(CPUState *cs, KvmPutState level, Error **errp)
         return ret;
     }
 
+    /*
+     * For RUNTIME_STATE, KVM already has the correct FP and Vector state
+     * from the preceding KVM_RUN exit. QEMU never modifies these registers
+     * during exit handling, so re-syncing is unnecessary.  This saves ~68
+     * KVM_SET_ONE_REG ioctls per vCPU exit.  See also s390x which uses
+     * the same pattern.
+     */
+    if (KVM_PUT_RUNTIME_STATE == level) {
+        return ret;
+    }
+
     ret = kvm_riscv_put_regs_fp(cs);
     if (ret) {
         return ret;
@@ -1397,11 +1418,9 @@ int kvm_arch_put_registers(CPUState *cs, KvmPutState level, Error **errp)
 
     if (KVM_PUT_RESET_STATE == level) {
         RISCVCPU *cpu = RISCV_CPU(cs);
-        if (cs->cpu_index == 0) {
-            ret = kvm_riscv_sync_mpstate_to_kvm(cpu, KVM_MP_STATE_RUNNABLE);
-        } else {
-            ret = kvm_riscv_sync_mpstate_to_kvm(cpu, KVM_MP_STATE_STOPPED);
-        }
+        int state = cs->cpu_index == 0 ? KVM_MP_STATE_RUNNABLE
+                                       : KVM_MP_STATE_STOPPED;
+        ret = kvm_riscv_sync_mpstate_to_kvm(cpu, state);
         if (ret) {
             return ret;
         }
@@ -2014,8 +2033,8 @@ void riscv_kvm_cpu_finalize_features(RISCVCPU *cpu, Error **errp)
     int ret;
 
     /* short-circuit without spinning the scratch CPU */
-    if (!cpu->cfg.ext_zicbom && !cpu->cfg.ext_zicboz &&
-        !riscv_has_ext(env, RVV)) {
+    if (!cpu->cfg.ext_zicbom && !cpu->cfg.ext_zicbop &&
+        !cpu->cfg.ext_zicboz && !riscv_has_ext(env, RVV)) {
         return;
     }
 
@@ -2025,7 +2044,7 @@ void riscv_kvm_cpu_finalize_features(RISCVCPU *cpu, Error **errp)
     }
 
     if (cpu->cfg.ext_zicbom &&
-        riscv_cpu_option_set(kvm_cbom_blocksize.name)) {
+        riscv_cpu_option_set(cpu, kvm_cbom_blocksize.name)) {
 
         reg.id = KVM_RISCV_REG_ID_ULONG(KVM_REG_RISCV_CONFIG,
                                         kvm_cbom_blocksize.kvm_reg_id);
@@ -2044,7 +2063,7 @@ void riscv_kvm_cpu_finalize_features(RISCVCPU *cpu, Error **errp)
     }
 
     if (cpu->cfg.ext_zicboz &&
-        riscv_cpu_option_set(kvm_cboz_blocksize.name)) {
+        riscv_cpu_option_set(cpu, kvm_cboz_blocksize.name)) {
 
         reg.id = KVM_RISCV_REG_ID_ULONG(KVM_REG_RISCV_CONFIG,
                                         kvm_cboz_blocksize.kvm_reg_id);
@@ -2062,8 +2081,27 @@ void riscv_kvm_cpu_finalize_features(RISCVCPU *cpu, Error **errp)
         }
     }
 
+    if (cpu->cfg.ext_zicbop &&
+        riscv_cpu_option_set(cpu, kvm_cbop_blocksize.name)) {
+
+        reg.id = KVM_RISCV_REG_ID_ULONG(KVM_REG_RISCV_CONFIG,
+                                        kvm_cbop_blocksize.kvm_reg_id);
+        reg.addr = (uint64_t)&val;
+        ret = ioctl(kvmcpu.cpufd, KVM_GET_ONE_REG, &reg);
+        if (ret != 0) {
+            error_setg_errno(errp, errno, "Unable to read cbop_blocksize");
+            return;
+        }
+
+        if (cpu->cfg.cbop_blocksize != val) {
+            error_setg(errp, "Unable to set cbop_blocksize to a different "
+                       "value than the host (%lu)", val);
+            return;
+        }
+    }
+
     /* Users are setting vlen, not vlenb */
-    if (riscv_has_ext(env, RVV) && riscv_cpu_option_set("vlen")) {
+    if (riscv_has_ext(env, RVV) && riscv_cpu_option_set(cpu, "vlen")) {
         if (!kvm_v_vlenb.supported) {
             error_setg(errp, "Unable to set 'vlenb': register not supported");
             return;
@@ -2177,19 +2215,21 @@ int kvm_arch_remove_sw_breakpoint(CPUState *cs, struct kvm_sw_breakpoint *bp)
     return 0;
 }
 
-int kvm_arch_insert_hw_breakpoint(vaddr addr, vaddr len, int type)
+int kvm_arch_insert_gdbstub_hw_breakpoint(vaddr addr, vaddr len,
+                                          GdbBreakpointType type)
 {
     /* TODO; To be implemented later. */
     return -EINVAL;
 }
 
-int kvm_arch_remove_hw_breakpoint(vaddr addr, vaddr len, int type)
+int kvm_arch_remove_gdbstub_hw_breakpoint(vaddr addr, vaddr len,
+                                          GdbBreakpointType type)
 {
     /* TODO; To be implemented later. */
     return -EINVAL;
 }
 
-void kvm_arch_remove_all_hw_breakpoints(void)
+void kvm_arch_remove_all_gdbstub_hw_breakpoints(void)
 {
     /* TODO; To be implemented later. */
 }

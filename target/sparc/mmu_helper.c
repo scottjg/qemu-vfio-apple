@@ -21,6 +21,7 @@
 #include "qemu/log.h"
 #include "cpu.h"
 #include "exec/cputlb.h"
+#include "accel/tcg/cpu-loop.h"
 #include "accel/tcg/cpu-mmu-index.h"
 #include "exec/page-protection.h"
 #include "exec/target_page.h"
@@ -360,26 +361,39 @@ void dump_mmu(CPUSPARCState *env)
     unsigned int n, m, o;
     hwaddr pa;
     uint32_t pde;
+    TranslateForDebugResult tres;
 
     qemu_printf("Root ptr: " HWADDR_FMT_plx ", ctx: %d\n",
                 (hwaddr)env->mmuregs[1] << 4, env->mmuregs[2]);
     for (n = 0, va = 0; n < 256; n++, va += 16 * 1024 * 1024) {
         pde = mmu_probe(env, va, 2);
         if (pde) {
-            pa = cpu_get_phys_page_debug(cs, va);
+            if (!cpu_translate_for_debug(cs, va, &tres)) {
+                pa = -1;
+            } else {
+                pa = tres.physaddr;
+            }
             qemu_printf("VA: " TARGET_FMT_lx ", PA: " HWADDR_FMT_plx
                         " PDE: " TARGET_FMT_lx "\n", va, pa, pde);
             for (m = 0, va1 = va; m < 64; m++, va1 += 256 * 1024) {
                 pde = mmu_probe(env, va1, 1);
                 if (pde) {
-                    pa = cpu_get_phys_page_debug(cs, va1);
+                    if (!cpu_translate_for_debug(cs, va1, &tres)) {
+                        pa = -1;
+                    } else {
+                        pa = tres.physaddr;
+                    }
                     qemu_printf(" VA: " TARGET_FMT_lx ", PA: "
                                 HWADDR_FMT_plx " PDE: " TARGET_FMT_lx "\n",
                                 va1, pa, pde);
                     for (o = 0, va2 = va1; o < 64; o++, va2 += 4 * 1024) {
                         pde = mmu_probe(env, va2, 0);
                         if (pde) {
-                            pa = cpu_get_phys_page_debug(cs, va2);
+                            if (!cpu_translate_for_debug(cs, va2, &tres)) {
+                                pa = -1;
+                            } else {
+                                pa = tres.physaddr;
+                            }
                             qemu_printf("  VA: " TARGET_FMT_lx ", PA: "
                                         HWADDR_FMT_plx " PTE: "
                                         TARGET_FMT_lx "\n",
@@ -902,7 +916,7 @@ hwaddr cpu_get_phys_page_nofault(CPUSPARCState *env, target_ulong addr,
 }
 #endif
 
-hwaddr sparc_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
+hwaddr sparc_cpu_get_phys_addr_debug(CPUState *cs, vaddr addr)
 {
     CPUSPARCState *env = cpu_env(cs);
     hwaddr phys_addr;
@@ -913,7 +927,7 @@ hwaddr sparc_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
             return -1;
         }
     }
-    return phys_addr;
+    return phys_addr | (addr & ~TARGET_PAGE_MASK);
 }
 
 G_NORETURN void sparc_cpu_do_unaligned_access(CPUState *cs, vaddr addr,

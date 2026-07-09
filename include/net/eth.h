@@ -119,7 +119,7 @@ struct ip6_header {
     } ip6_ctlun;
     struct in6_address ip6_src;    /* source address */
     struct in6_address ip6_dst;    /* destination address */
-};
+} QEMU_PACKED;
 
 typedef struct ip6_pseudo_header {
     struct in6_address ip6_src;

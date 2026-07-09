@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "qemu/osdep.h"
+#include "exec/page-protection.h"
 #include "qemu.h"
 #include "loader.h"
 #include "target_elf.h"
@@ -14,6 +15,19 @@ const char *get_elf_cpu_model(uint32_t eflags)
 const char *get_elf_platform(CPUState *cs)
 {
     return "PARISC";
+}
+
+void elf_core_copy_regs(target_elf_gregset_t *r, const CPUArchState *env)
+{
+    int i;
+
+    memset(r, 0, sizeof(*r));
+    for (i = 0; i < 32; i++) {
+        r->gr[i] = tswapal(env->gr[i]);
+    }
+    r->iaoq[0] = tswapal(env->iaoq_f);
+    r->iaoq[1] = tswapal(env->iaoq_b);
+    r->sar     = tswapal(env->cr[CR_SAR]);
 }
 
 bool init_guest_commpage(void)

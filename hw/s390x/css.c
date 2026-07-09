@@ -15,6 +15,7 @@
 #include "qemu/bitops.h"
 #include "qemu/error-report.h"
 #include "system/address-spaces.h"
+#include "system/physmem.h"
 #include "hw/s390x/ioinst.h"
 #include "hw/core/qdev-properties.h"
 #include "hw/s390x/css.h"
@@ -755,13 +756,13 @@ static CCW1 copy_ccw_from_guest(hwaddr addr, bool fmt1)
     CCW1 ret;
 
     if (fmt1) {
-        cpu_physical_memory_read(addr, &tmp1, sizeof(tmp1));
+        physical_memory_read(addr, &tmp1, sizeof(tmp1));
         ret.cmd_code = tmp1.cmd_code;
         ret.flags = tmp1.flags;
         ret.count = be16_to_cpu(tmp1.count);
         ret.cda = be32_to_cpu(tmp1.cda);
     } else {
-        cpu_physical_memory_read(addr, &tmp0, sizeof(tmp0));
+        physical_memory_read(addr, &tmp0, sizeof(tmp0));
         if ((tmp0.cmd_code & 0x0f) == CCW_CMD_TIC) {
             ret.cmd_code = CCW_CMD_TIC;
             ret.flags = 0;
@@ -1871,6 +1872,7 @@ int css_collect_chp_desc(int m, uint8_t cssid, uint8_t f_chpid, uint8_t l_chpid,
     int i, desc_size;
     uint32_t words[8];
     uint32_t chpid_type_word;
+    uint32_t max_chpids, chpid_count = 0;
     CssImage *css;
 
     if (!m && !cssid) {
@@ -1881,9 +1883,25 @@ int css_collect_chp_desc(int m, uint8_t cssid, uint8_t f_chpid, uint8_t l_chpid,
     if (!css) {
         return 0;
     }
+
+    if (rfmt == 0) {
+        max_chpids = 256;
+    } else if (rfmt == 1) {
+        max_chpids = 127;
+    } else {
+        /* Should be rejected by caller */
+        return 0;
+    }
+
     desc_size = 0;
     for (i = f_chpid; i <= l_chpid; i++) {
         if (css->chpids[i].in_use) {
+            /* Limit number of CHPIDs sent back */
+            if (chpid_count == max_chpids) {
+                break;
+            }
+
+            chpid_count++;
             chpid_type_word = 0x80000000 | (css->chpids[i].type << 8) | i;
             if (rfmt == 0) {
                 words[0] = cpu_to_be32(chpid_type_word);

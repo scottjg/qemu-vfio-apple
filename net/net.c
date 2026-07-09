@@ -653,7 +653,7 @@ static ssize_t filter_receive_iov(NetClientState *nc,
                                   NetPacketSent *sent_cb)
 {
     ssize_t ret = 0;
-    NetFilterState *nf = NULL;
+    NetFilterState *nf;
 
     if (direction == NET_FILTER_DIRECTION_TX) {
         QTAILQ_FOREACH(nf, &nc->filters, next) {

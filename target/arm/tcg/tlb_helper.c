@@ -8,8 +8,10 @@
 #include "qemu/osdep.h"
 #include "cpu.h"
 #include "helper.h"
+#include "accel/tcg/cpu-loop.h"
 #include "internals.h"
 #include "cpu-features.h"
+#include "hw/intc/armv7m_nvic.h"
 
 /*
  * Returns true if the stage 1 translation regime is using LPAE format page
@@ -318,7 +320,30 @@ void arm_cpu_do_transaction_failed(CPUState *cs, hwaddr physaddr,
                                    MemTxResult response, uintptr_t retaddr)
 {
     ARMCPU *cpu = ARM_CPU(cs);
+    CPUARMState *env = &cpu->env;
     ARMMMUFaultInfo fi = {};
+
+    /*
+     * For M-profile, CCR.BFHFNMIGN lets software executing at a negative
+     * priority (in HardFault/NMI, or with FAULTMASK set) suppress precise
+     * data BusFaults from load/store instructions: the access completes
+     * returning UNKNOWN data (the store is dropped), the fault status is
+     * recorded in BFSR/BFAR, but no BusFault exception is taken. This is
+     * the mechanism software uses to probe for the presence of a device
+     * (e.g. the NXP System Manager's SystemMemoryProbe). Honour it by
+     * recording the status and returning without raising, so the faulting
+     * instruction completes rather than re-faulting forever. BFHFNMIGN
+     * applies only to data accesses, so instruction fetches are unaffected.
+     */
+    if (arm_feature(env, ARM_FEATURE_M) &&
+        access_type != MMU_INST_FETCH &&
+        (env->v7m.ccr[M_REG_NS] & R_V7M_CCR_BFHFNMIGN_MASK) &&
+        armv7m_nvic_neg_prio_requested(env->nvic, env->v7m.secure)) {
+        env->v7m.cfsr[M_REG_NS] |=
+            (R_V7M_CFSR_PRECISERR_MASK | R_V7M_CFSR_BFARVALID_MASK);
+        env->v7m.bfar = addr;
+        return;
+    }
 
     /* now we have a real cpu fault */
     cpu_restore_state(cs, retaddr);
@@ -361,9 +386,9 @@ bool arm_cpu_tlb_fill_align(CPUState *cs, CPUTLBEntryFull *out, vaddr address,
         fi->type = ARMFault_Alignment;
     } else if (address & ((1 << memop_alignment_bits(memop)) - 1)) {
         fi->type = ARMFault_Alignment;
-    } else if (!get_phys_addr(&cpu->env, address, access_type, memop,
-                              core_to_arm_mmu_idx(&cpu->env, mmu_idx),
-                              &res, fi)) {
+    } else if (get_phys_addr(&cpu->env, address, access_type, memop,
+                             core_to_arm_mmu_idx(&cpu->env, mmu_idx),
+                             &res, fi)) {
         res.f.extra.arm.pte_attrs = res.cacheattrs.attrs;
         res.f.extra.arm.shareability = res.cacheattrs.shareability;
         *out = res.f;
