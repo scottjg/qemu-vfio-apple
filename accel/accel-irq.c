@@ -104,6 +104,14 @@ inline AccelRouteChange accel_irqchip_begin_route_changes(void)
             .changes = 0,
         };
     }
-    error_report("can't initiate route change, no accel irqchip available");
-    abort();
+    /*
+     * Accelerators without an irqchip (hvf, tcg, ...) never record any
+     * change: add_msi_route() fails with -ENOSYS and callers such as vfio
+     * fall back to routing interrupts through userspace.  Hand out an empty
+     * change set so that commit_route_changes() becomes a no-op.
+     */
+    return (AccelRouteChange) {
+        .accel = NULL,
+        .changes = 0,
+    };
 }
