@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 #
 # Push a prebaked qcow2 artifact + its manifest to GHCR as an OCI
-# artifact. Intended to be run after `build-ubuntu-desktop-image.sh`
+# artifact. Intended to be run after `build-image.sh <profile>`
 # emits $ARTIFACT_DIR/<name>.qcow2 and <name>.manifest.json.
 #
 # The artifact ends up at:
 #
 #   ghcr.io/scottjg/qemu-vfio-apple-images:<name>           (immutable)
-#   ghcr.io/scottjg/qemu-vfio-apple-images:latest           (rolling)
+#   ghcr.io/scottjg/qemu-vfio-apple-images:<rolling>        (rolling alias)
+#
+# The rolling alias is derived from the manifest's profile so a docker
+# publish can never clobber the desktop's :latest by accident:
+#
+#   desktop -> latest
+#   docker  -> docker-latest
+#
+# Override with ROLLING_TAG=..., or skip it with ALSO_TAG_LATEST=0.
 #
 # qemu-vfio-apple speaks the OCI registry API directly (no oras runtime
 # needed on the client) but `oras` is by far the simplest way to *push*
@@ -28,7 +36,8 @@
 #   GHCR_REPO          registry path (default: ghcr.io/scottjg/qemu-vfio-apple-images)
 #   SOURCE_REPO_URL    OCI annotation linking the artifact to a source repo
 #                      (default: https://github.com/scottjg/qemu-vfio-apple)
-#   ALSO_TAG_LATEST    set to 0 to skip the :latest tag push
+#   ALSO_TAG_LATEST    set to 0 to skip the rolling alias push
+#   ROLLING_TAG        override the profile-derived rolling alias
 #
 # Intentionally *not* shipping base+delta qcow2 layering yet — each
 # release gets a single-blob manifest. The layering can be added later
@@ -115,6 +124,25 @@ ARTIFACT_FN=$(jq -r '.artifact' "$MANIFEST_JSON")
 ARTIFACT_PATH="$ARTIFACT_DIR/$ARTIFACT_FN"
 SHA256=$(jq -r '.sha256'       "$MANIFEST_JSON")
 
+# Profile-derived rolling alias. The desktop image owns bare :latest
+# (it's the launcher's default --image); every other profile gets its
+# own <profile>-latest so publishing it can't hijack desktop users.
+PROFILE=$(jq -r '.features // {}
+    | if .docker == true then "docker"
+      elif .desktop == true then "desktop"
+      else "unknown" end' "$MANIFEST_JSON")
+if [ -z "${ROLLING_TAG:-}" ]; then
+    case "$PROFILE" in
+        desktop) ROLLING_TAG="latest" ;;
+        docker)  ROLLING_TAG="docker-latest" ;;
+        *)       ROLLING_TAG="" ;;
+    esac
+fi
+if [ "$ALSO_TAG_LATEST" = "1" ] && [ -z "$ROLLING_TAG" ]; then
+    log "manifest has no recognizable profile; skipping the rolling alias"
+    log "  (pass ROLLING_TAG=... to set one explicitly)"
+fi
+
 [ -f "$ARTIFACT_PATH" ] || die "artifact missing: $ARTIFACT_PATH"
 
 # Re-verify the sha256 so we don't push a corrupt image that happens to
@@ -153,20 +181,20 @@ oras push "$GHCR_REPO:$IMAGE_NAME" \
     --artifact-type "$artifact_type" \
     --annotation "org.opencontainers.image.source=$SOURCE_REPO_URL" \
     --annotation "org.opencontainers.image.title=$IMAGE_NAME" \
-    --annotation "org.opencontainers.image.description=apple-vfio prebaked Ubuntu Desktop aarch64 (qcow2, single blob)" \
+    --annotation "org.opencontainers.image.description=apple-vfio prebaked Ubuntu aarch64, $PROFILE profile (qcow2, single blob)" \
     --annotation "org.opencontainers.image.licenses=GPL-2.0" \
     "$ARTIFACT_FN:application/vnd.scottjg.qemu-vfio.qcow2" \
     "manifest.json:application/vnd.scottjg.qemu-vfio.image.manifest.v1+json"
 
-if [ "$ALSO_TAG_LATEST" = "1" ]; then
-    log "aliasing $GHCR_REPO:latest -> $GHCR_REPO:$IMAGE_NAME"
-    oras tag "$GHCR_REPO:$IMAGE_NAME" latest
+if [ "$ALSO_TAG_LATEST" = "1" ] && [ -n "$ROLLING_TAG" ]; then
+    log "aliasing $GHCR_REPO:$ROLLING_TAG -> $GHCR_REPO:$IMAGE_NAME"
+    oras tag "$GHCR_REPO:$IMAGE_NAME" "$ROLLING_TAG"
 fi
 
 popd >/dev/null
 
 log "done. pull with:"
 log "  qemu-vfio-apple pull --image $GHCR_REPO:$IMAGE_NAME"
-if [ "$ALSO_TAG_LATEST" = "1" ]; then
-    log "  qemu-vfio-apple pull --image $GHCR_REPO:latest"
+if [ "$ALSO_TAG_LATEST" = "1" ] && [ -n "$ROLLING_TAG" ]; then
+    log "  qemu-vfio-apple pull --image $GHCR_REPO:$ROLLING_TAG"
 fi

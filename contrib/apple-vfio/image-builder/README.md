@@ -30,9 +30,10 @@ Each profile embeds its own guest provisioning script
 (`guest/provision-desktop.sh` / `guest/provision-docker.sh`) into the
 cloud-init seed. `RENDER_ONLY=1 ./build-image.sh <profile>` renders the
 seed and stops — useful when iterating on a guest script or the
-template. When publishing a docker-profile artifact with
-`scripts/publish-to-ghcr.sh`, pass the docker artifacts dir and
-`ALSO_TAG_LATEST=0` so `:latest` keeps pointing at the desktop image.
+template. `scripts/publish-to-ghcr.sh <artifacts-dir>` reads the profile
+from the manifest and picks the rolling alias itself — desktop artifacts
+roll `:latest`, docker artifacts roll `:docker-latest` — so a docker
+publish can never repoint `:latest` away from the desktop image.
 
 ## Current approach
 

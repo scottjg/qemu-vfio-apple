@@ -75,6 +75,18 @@
 			);
 			target = 416AB0052F6BD5FB00C53A34 /* VFIOUserPCIDriver */;
 		};
+		41DD20202F80D00100C53A34 /* Exceptions for "qemu-vfio-apple" folder in "VFIOUserHostApp" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Cache.swift,
+				Devices.swift,
+				Downloader.swift,
+				Driver.swift,
+				main.swift,
+				VMLauncher.swift,
+			);
+			target = 416AAFF22F6BD59100C53A34 /* VFIOUserHostApp */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -93,6 +105,9 @@
 		};
 		41DD20022F71D00100C53A34 /* qemu-vfio-apple */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				41DD20202F80D00100C53A34 /* Exceptions for "qemu-vfio-apple" folder in "VFIOUserHostApp" target */,
+			);
 			path = "qemu-vfio-apple";
 			sourceTree = "<group>";
 		};
@@ -191,6 +206,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				416AAFF52F6BD59100C53A34 /* VFIOUserHostApp */,
+				41DD20022F71D00100C53A34 /* qemu-vfio-apple */,
 			);
 			name = VFIOUserHostApp;
 			packageProductDependencies = (
@@ -495,6 +511,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSSystemExtensionUsageDescription = "for claiming pci devices on your system to pass through to virtual machines";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -526,6 +543,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSSystemExtensionUsageDescription = "for claiming pci devices on your system to pass through to virtual machines";
 				LD_RUNPATH_SEARCH_PATHS = (
