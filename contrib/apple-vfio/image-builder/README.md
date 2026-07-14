@@ -1,11 +1,39 @@
-# Ubuntu Desktop Image Builder
+# Ubuntu Image Builder
 
-This directory contains the first pass of the prebaked guest-image pipeline for
-`apple-vfio`.
+This directory contains the prebaked guest-image pipeline for `apple-vfio`.
 
-The goal is to produce a versioned Ubuntu Desktop `qcow2` artifact that can be
-downloaded by a future launcher CLI and booted with the QEMU runtime already
+The goal is to produce versioned Ubuntu `qcow2` artifacts that can be
+downloaded by the launcher CLI and booted with the QEMU runtime already
 bundled into `VFIOUserHostApp`.
+
+`build-image.sh` drives the pipeline and takes a profile:
+
+```bash
+./contrib/apple-vfio/image-builder/build-image.sh desktop   # the original desktop/gaming image
+./contrib/apple-vfio/image-builder/build-image.sh docker    # headless Docker image
+```
+
+- **desktop** — Ubuntu Desktop + FEX/Steam + NVIDIA gaming stack
+  (`build-ubuntu-desktop-image.sh` is a back-compat wrapper for this profile).
+- **docker** — headless server image backing `qemu-vfio-apple docker up`:
+  Docker Engine listening on unix socket + `tcp://0.0.0.0:2375` (safe:
+  the guest sits on a private slirp network; only the host-side loopback
+  hostfwd reaches it), NVIDIA driver + `nvidia-container-toolkit` (both
+  the `nvidia` runtime for `--gpus all` and a boot-time CDI spec
+  generator), Mesa Vulkan (RADV) + `vulkan-tools` for the AMD
+  `--device /dev/dri` path, optional experimental ROCm behind
+  `INSTALL_ROCM=1`, and the `apple-dma` DKMS module. Docker profile
+  knobs: `INSTALL_NVIDIA` (default 1), `INSTALL_APPLE_DMA` (default 1),
+  `INSTALL_ROCM` (default 0), `DISK_SIZE` (default `64G`).
+
+Each profile embeds its own guest provisioning script
+(`guest/provision-desktop.sh` / `guest/provision-docker.sh`) into the
+cloud-init seed. `RENDER_ONLY=1 ./build-image.sh <profile>` renders the
+seed and stops — useful when iterating on a guest script or the
+template. `scripts/publish-to-ghcr.sh <artifacts-dir>` reads the profile
+from the manifest and picks the rolling alias itself — desktop artifacts
+roll `:latest`, docker artifacts roll `:docker-latest` — so a docker
+publish can never repoint `:latest` away from the desktop image.
 
 ## Current approach
 

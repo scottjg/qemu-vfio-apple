@@ -131,8 +131,15 @@ log "updating apt metadata"
 retry 5 apt-get update
 
 log "installing Ubuntu Desktop"
+#
+# linux-firmware is not present in the cloud image and is not pulled in by
+# ubuntu-desktop.  Without it amdgpu fails early_init for every IP block that
+# needs a blob (psp, smu, gfx, sdma, vcn) with -ENOENT and the passed-through
+# GPU never comes up.
+#
 retry 3 apt-get install -y \
     ubuntu-desktop \
+    linux-firmware-amd-graphics linux-firmware-intel-graphics \
     qemu-guest-agent \
     spice-vdagent \
     mesa-utils \
@@ -638,9 +645,9 @@ injection = (
     "\n"
     "ARCH=$(arch)\n"
     "\n"
-    "if [[ \"$HOSTTYPE\" == \"aarch64\" ]]; then\n"
+    "if [ \"$HOSTTYPE\" = \"aarch64\" ]; then\n"
     "  echo \"System architecture is aarch64 (ARM64). Launching with FEXBash\"\n"
-    "  FEXBash $0 \"$@\"\n"
+    "  FEXBash -c $0 \"$@\"\n"
     "  exit\n"
     "else\n"
     "  echo \"System architecture is not aarch64. It is: $ARCH\"\n"

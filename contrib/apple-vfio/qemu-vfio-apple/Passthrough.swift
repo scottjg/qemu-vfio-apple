@@ -40,6 +40,16 @@ struct PassthroughCandidate {
     let vendor:   UInt16
     let deviceId: UInt16
     let classCode: UInt32     // full 3-byte PCI class code (base<<16 | sub<<8 | prog)
+
+    /// Registry-entry name of the topmost IOPCIDevice ancestor (the
+    /// root port, e.g. "pcic1-bridge"). Apple Silicon has no PCI
+    /// segment ids, so two devices behind different roots can share a
+    /// BDF — the root name is the only stable disambiguator, and is
+    /// what `-device vfio-apple-pci,host-root=` matches on. nil for
+    /// synthesized candidates (explicit --passthrough of an unbound
+    /// BDF) or if the registry walk failed.
+    let root: String?
+
     let description: String
 
     /// vfio-apple-pci host= syntax, e.g. "43:00.0".
@@ -62,29 +72,50 @@ struct PassthroughCandidate {
 
 // MARK: - Auto-detect
 
-/// Find all functions of the slot we should pass through. Returns an
-/// empty array if no dext-bound devices exist. The launcher treats an
-/// empty return as "no passthrough" rather than an error.
+/// Find all functions of the single slot we should pass through (the
+/// historical CLI behaviour). Returns an empty array if no dext-bound
+/// devices exist. The launcher treats an empty return as "no
+/// passthrough" rather than an error.
 func autoDetectPassthroughSlot() -> [PassthroughCandidate] {
+    autoDetectPassthroughSlots().first ?? []
+}
+
+/// Find every passthrough-worthy slot, one function group per physical
+/// slot, sorted deterministically (root name, then BDF) so the pick
+/// doesn't wobble across launches the way Dictionary iteration order
+/// does.
+///
+/// Grouping keys on (root, bus, device) — *not* bus:device alone.
+/// Apple Silicon reuses BDFs across root ports, so keying without the
+/// root would merge two physical GPUs that happen to collide on BDF
+/// into one bogus "multifunction" group.
+///
+/// Selection: every slot containing a display controller (so a
+/// dual-eGPU host yields two groups). If no display-class slot is
+/// bound at all, fall back to the first bound slot of any class —
+/// useful for non-GPU testing and matching what a user would expect
+/// from "pass whichever device the dext claimed".
+func autoDetectPassthroughSlots() -> [[PassthroughCandidate]] {
     let all = collectDextBoundPCIDevices()
     if all.isEmpty { return [] }
 
-    // Group by (bus, device).
-    var slots: [UInt16: [PassthroughCandidate]] = [:]
+    var slots: [String: [PassthroughCandidate]] = [:]
     for c in all {
-        let key = (UInt16(c.bus) << 8) | UInt16(c.device)
+        let key = String(format: "%@/%02x:%02x", c.root ?? "?", c.bus, c.device)
         slots[key, default: []].append(c)
     }
 
-    // Prefer the first slot whose function 0 is a display controller.
-    let preferredSlot: [PassthroughCandidate]? = slots.values.first(where: { group in
-        group.contains(where: { $0.isDisplayController })
-    })
+    let ordered = slots
+        .sorted(by: { $0.key < $1.key })
+        .map { entry -> [PassthroughCandidate] in
+            entry.value.sorted(by: { $0.function < $1.function })
+        }
 
-    let picked = preferredSlot ?? slots.values.first
-    guard var functions = picked else { return [] }
-    functions.sort(by: { $0.function < $1.function })
-    return functions
+    let displaySlots = ordered.filter { group in
+        group.contains(where: { $0.isDisplayController })
+    }
+    if !displaySlots.isEmpty { return displaySlots }
+    return ordered.first.map { [$0] } ?? []
 }
 
 /// Given an explicit BDF (e.g. "43:00.0"), return the dext-bound
@@ -97,7 +128,7 @@ func findSlotSiblings(bus: UInt8, device: UInt8, fallbackBDF: String) -> [Passth
     if match.isEmpty {
         return [PassthroughCandidate(
             bus: bus, device: device, function: 0,
-            vendor: 0, deviceId: 0, classCode: 0,
+            vendor: 0, deviceId: 0, classCode: 0, root: nil,
             description: "explicit (\(fallbackBDF), not bound to dext)"
         )]
     }
@@ -123,7 +154,7 @@ func findSingleFunction(bus: UInt8,
     }
     return [PassthroughCandidate(
         bus: bus, device: device, function: function,
-        vendor: 0, deviceId: 0, classCode: 0,
+        vendor: 0, deviceId: 0, classCode: 0, root: nil,
         description: "explicit (\(fallbackBDF), not bound to dext)"
     )]
 }
@@ -210,12 +241,14 @@ private func collectDextBoundPCIDevices() -> [PassthroughCandidate] {
         } else {
             name = String(format: "pci%04x,%04x", Int(vendor), Int(dvId))
         }
-        let desc = String(format: "%@ (%04x:%04x @ %02x:%02x.%x, class %06x)",
-                          name, Int(vendor), Int(dvId), bus, device, function, Int(cls))
+        let root = pciRootName(for: dev)
+        let desc = String(format: "%@ (%04x:%04x @ %02x:%02x.%x, class %06x, root %@)",
+                          name, Int(vendor), Int(dvId), bus, device, function,
+                          Int(cls), root ?? "?")
         result.append(PassthroughCandidate(
             bus: bus, device: device, function: function,
             vendor: vendor, deviceId: dvId,
-            classCode: cls, description: desc
+            classCode: cls, root: root, description: desc
         ))
     }
     return result
@@ -268,6 +301,40 @@ private func parsePcidebugTriple(_ raw: Any?) -> (UInt8, UInt8, UInt8)? {
           let fn  = UInt8(parts[2])
     else { return nil }
     return (bus, dv, fn)
+}
+
+/// Walk up the IOService plane to the topmost IOPCIDevice ancestor (the
+/// root port) and return its registry-entry name. Same logic as the
+/// list-devices enumeration in Devices.swift (private there); this copy
+/// keeps Passthrough.swift self-contained so it can be shared into the
+/// host app target, which doesn't compile Devices.swift.
+private func pciRootName(for dev: io_object_t) -> String? {
+    var topmostPCI: io_object_t = 0
+    var current: io_object_t = dev
+    IOObjectRetain(current)
+    while true {
+        if objectIsIOPCIDevice(current) {
+            if topmostPCI != 0 { IOObjectRelease(topmostPCI) }
+            IOObjectRetain(current)
+            topmostPCI = current
+        }
+        var parent: io_object_t = 0
+        let kr = IORegistryEntryGetParentEntry(current, kIOServicePlane, &parent)
+        IOObjectRelease(current)
+        if kr != KERN_SUCCESS || parent == 0 { break }
+        current = parent
+    }
+    defer { if topmostPCI != 0 { IOObjectRelease(topmostPCI) } }
+    guard topmostPCI != 0 else { return nil }
+    var name = [CChar](repeating: 0, count: 128)
+    guard IORegistryEntryGetName(topmostPCI, &name) == KERN_SUCCESS else { return nil }
+    return String(cString: name)
+}
+
+private func objectIsIOPCIDevice(_ obj: io_object_t) -> Bool {
+    var name = [CChar](repeating: 0, count: 128)
+    guard IOObjectGetClass(obj, &name) == KERN_SUCCESS else { return false }
+    return String(cString: name) == "IOPCIDevice"
 }
 
 private func readU16(_ v: Any?) -> UInt16 {

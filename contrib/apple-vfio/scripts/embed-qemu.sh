@@ -151,18 +151,25 @@ if [ -d "$DIST/share/qemu" ]; then
     rsync -a --delete "$DIST/share/qemu/" "$SHARE_DIR/"
 fi
 
+# macOS ships bash 3.2, where expanding an empty array under `set -u`
+# trips "unbound variable" — the `+` parameter-expansion idiom below
+# expands to nothing when the array is empty.
 echo "embed-qemu: signing dylibs (identity: $SIGN_ID)"
 for dylib in "$LIB_DIR"/*.dylib; do
     [ -f "$dylib" ] || continue
-    codesign --force --sign "$SIGN_ID" "${TS_OPT[@]}" "${RUNTIME_OPT[@]}" "$dylib"
+    codesign --force --sign "$SIGN_ID" \
+        ${TS_OPT[@]+"${TS_OPT[@]}"} ${RUNTIME_OPT[@]+"${RUNTIME_OPT[@]}"} \
+        "$dylib"
 done
 
 echo "embed-qemu: signing qemu-img (identity: $SIGN_ID)"
-codesign --force --sign "$SIGN_ID" "${TS_OPT[@]}" "${RUNTIME_OPT[@]}" \
+codesign --force --sign "$SIGN_ID" \
+    ${TS_OPT[@]+"${TS_OPT[@]}"} ${RUNTIME_OPT[@]+"${RUNTIME_OPT[@]}"} \
     "$MACOS_DIR/qemu-img"
 
 echo "embed-qemu: signing qemu-system-aarch64 (identity: $SIGN_ID, entitlements: hypervisor)"
-codesign --force --sign "$SIGN_ID" "${TS_OPT[@]}" "${RUNTIME_OPT[@]}" \
+codesign --force --sign "$SIGN_ID" \
+    ${TS_OPT[@]+"${TS_OPT[@]}"} ${RUNTIME_OPT[@]+"${RUNTIME_OPT[@]}"} \
     --entitlements "$ENTITLEMENTS" \
     "$MACOS_DIR/qemu-system-aarch64"
 

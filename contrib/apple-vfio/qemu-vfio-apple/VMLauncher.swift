@@ -569,6 +569,12 @@ private func buildQemuArgv(opts: Options,
                 String(format: "addr=0x%x.%x", guestSlot, guestFn),
                 "dma-companion=on",
             ]
+            // Apple Silicon reuses BDFs across host PCI roots, so always
+            // pin the root-port name when we know it — without it qemu
+            // errors out if two dext instances claim the same BDF.
+            if let root = c.root, !root.isEmpty {
+                props.append("host-root=\(root)")
+            }
             // multifunction=on only needs to be set on function 0 of
             // the guest slot — qemu propagates the bit to the whole
             // slot. Setting it on other functions is harmless but

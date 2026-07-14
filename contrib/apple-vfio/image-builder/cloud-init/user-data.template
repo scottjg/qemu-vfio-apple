@@ -10,7 +10,7 @@ package_update: true
 package_upgrade: true
 
 write_files:
-  - path: /usr/local/sbin/qemu-vfio-provision-desktop.sh
+  - path: /usr/local/sbin/qemu-vfio-provision.sh
     owner: root:root
     permissions: '0755'
     content: |
@@ -23,6 +23,6 @@ write_files:
 @@APPLE_DMA_SRC_B64@@
 
 runcmd:
-  - [bash, -lc, "LOGIN_USER='@@BUILD_USER@@' LOGIN_PASSWORD='@@BUILD_PASSWORD@@' INSTALL_FEX=@@INSTALL_FEX@@ INSTALL_STEAM=@@INSTALL_STEAM@@ INSTALL_NVIDIA=@@INSTALL_NVIDIA@@ INSTALL_APPLE_DMA=@@INSTALL_APPLE_DMA@@ APPLE_DMA_VERSION='@@APPLE_DMA_VERSION@@' APPLE_DMA_SRC_TGZ=/var/cache/qemu-vfio/apple-dma-src.tgz /usr/local/sbin/qemu-vfio-provision-desktop.sh 2>&1 | tee /var/log/qemu-vfio-provision.log"]
+  - [bash, -lc, "@@PROVISION_ENV@@ /usr/local/sbin/qemu-vfio-provision.sh 2>&1 | tee /var/log/qemu-vfio-provision.log"]
 
-final_message: "qemu-vfio desktop image build complete after $UPTIME seconds"
+final_message: "qemu-vfio image build complete after $UPTIME seconds"
